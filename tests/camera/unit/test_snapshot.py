@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 from camera.adapters.orbbec.profiles import G305_848X480_60
-from camera.contracts.models import (
+from camera.contracts.cam_structs import (
     AlignedRGBDObservation,
     AlignmentMode,
     CameraDistortion,

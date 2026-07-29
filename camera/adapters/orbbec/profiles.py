@@ -2,7 +2,7 @@
 
 from typing import Final
 
-from camera.contracts.models import CameraProfile
+from camera.contracts.cam_structs import CameraProfile
 
 # 这两套 Profile 是当前经用户确认的可选配置；适配器不会静默替换为默认流。
 G305_1280X800_30: Final = CameraProfile(1280, 800, 30, "MJPG", 1280, 800, 30, "Y16")

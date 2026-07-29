@@ -3,7 +3,7 @@
 import unittest
 
 from camera.adapters.orbbec.filters import OrbbecDepthFilterChain
-from camera.contracts.models import DepthProcessingConfig
+from camera.contracts.cam_structs import DepthProcessingConfig
 
 
 class FakeDepthFrame:

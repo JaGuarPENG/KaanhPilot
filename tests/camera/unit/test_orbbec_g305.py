@@ -6,7 +6,7 @@ import numpy as np
 
 from camera.adapters.orbbec.g305 import OrbbecG305Camera
 from camera.adapters.orbbec.profiles import G305_848X480_60
-from camera.contracts.models import CameraIntrinsics
+from camera.contracts.cam_structs import CameraIntrinsics
 
 
 class OrganizedPointCloudTests(unittest.TestCase):

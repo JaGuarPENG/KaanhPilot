@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from camera.contracts.errors import CameraStreamError
-from camera.contracts.models import DepthProcessingConfig, FilterParameterDescriptor
+from camera.contracts.cam_structs import DepthProcessingConfig, FilterParameterDescriptor
 
 
 class OrbbecDepthFilterChain:

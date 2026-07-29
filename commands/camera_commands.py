@@ -10,7 +10,7 @@ from camera.adapters.orbbec.g305 import OrbbecG305Camera
 from camera.adapters.orbbec.profiles import G305_1280X800_30, G305_848X480_60
 from camera.contracts.errors import CameraError
 from camera.contracts.interface import Camera
-from camera.contracts.models import AlignmentMode, CameraProfile, DepthProcessingConfig
+from camera.contracts.cam_structs import AlignmentMode, CameraProfile, DepthProcessingConfig
 from camera.visualization.rgbd_viewer import ObservationVisualizer
 
 

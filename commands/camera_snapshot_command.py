@@ -9,7 +9,7 @@ from pathlib import Path
 from camera.adapters.orbbec.g305 import OrbbecG305Camera
 from camera.adapters.orbbec.profiles import G305_1280X800_30, G305_848X480_60
 from camera.contracts.errors import CameraError
-from camera.contracts.models import AlignmentMode, DepthProcessingConfig
+from camera.contracts.cam_structs import AlignmentMode, DepthProcessingConfig
 from camera.storage.snapshot import SavedSnapshot, save_observation_snapshot
 
 

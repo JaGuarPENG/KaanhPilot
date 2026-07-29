@@ -10,7 +10,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from camera.contracts.models import AlignedRGBDObservation
+from camera.contracts.cam_structs import AlignedRGBDObservation
 
 
 @dataclass(frozen=True, slots=True)

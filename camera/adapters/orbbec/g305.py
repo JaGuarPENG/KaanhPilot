@@ -14,7 +14,7 @@ import numpy as np
 
 from camera.contracts.errors import CameraError, CameraNotFoundError, CameraProfileError, CameraStateError, CameraStreamError, CameraTimeoutError
 from camera.contracts.interface import Camera
-from camera.contracts.models import (
+from camera.contracts.cam_structs import (
     AlignedRGBDObservation,
     AlignmentMode,
     CameraCapabilities,

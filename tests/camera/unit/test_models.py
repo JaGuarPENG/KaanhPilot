@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from camera.contracts.models import (
+from camera.contracts.cam_structs import (
     AlignedRGBDObservation,
     AlignmentMode,
     CameraDistortion,

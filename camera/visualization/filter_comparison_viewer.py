@@ -10,7 +10,7 @@ import numpy as np
 from camera.visualization.rgbd_viewer import camera_optical_to_open3d_display
 
 if TYPE_CHECKING:
-    from camera.contracts.models import AlignedRGBDObservation
+    from camera.contracts.cam_structs import AlignedRGBDObservation
 
 
 class FilterComparisonPointCloudViewer:

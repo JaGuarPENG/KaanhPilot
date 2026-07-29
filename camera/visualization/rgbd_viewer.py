@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 if TYPE_CHECKING:
-    from camera.contracts.models import AlignedRGBDObservation
+    from camera.contracts.cam_structs import AlignedRGBDObservation
 
 
 def camera_optical_to_open3d_display(camera_points_m: np.ndarray) -> np.ndarray:

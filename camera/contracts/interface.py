@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from camera.contracts.models import AlignedRGBDObservation, CameraCapabilities, CameraProfile, CameraState
+from camera.contracts.cam_structs import AlignedRGBDObservation, CameraCapabilities, CameraProfile, CameraState
 
 
 class Camera(ABC):
