@@ -27,14 +27,14 @@ class FilterComparisonResult:
 class CameraFilterComparisonCommand:
     """打开一个 G305 并在两个 Open3D 窗口中同步比较原始与过滤后点云。"""
 
-    def __init__(self, camera: OrbbecG305Camera, duration_s: float = 60.0, max_depth_m: float = 2.0, max_points: int = 200_000) -> None:
+    def __init__(self, camera: OrbbecG305Camera, duration_s: float = 60.0, max_field_m: float = 2.0, max_points: int = 200_000) -> None:
         if duration_s <= 0.0:
             raise ValueError("持续时间必须为正数")
         if not camera.depth_processing.enabled:
             raise ValueError("滤波对比命令要求至少启用一项深度处理")
         self._camera = camera
         self._duration_s = duration_s
-        self._max_depth_m = max_depth_m
+        self._max_field_m = max_field_m
         self._max_points = max_points
 
     def run(self) -> FilterComparisonResult:
@@ -43,7 +43,7 @@ class CameraFilterComparisonCommand:
         viewer: FilterComparisonPointCloudViewer | None = None
         try:
             self._camera.start()
-            viewer = FilterComparisonPointCloudViewer(self._max_depth_m, self._max_points)
+            viewer = FilterComparisonPointCloudViewer(self._max_field_m, self._max_points)
             deadline = started_at + self._duration_s
             while time.monotonic() < deadline:
                 pair = self._camera.get_latest_filter_comparison_observations()
@@ -77,16 +77,16 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--alignment", choices=tuple(mode.value for mode in AlignmentMode), default=AlignmentMode.AUTO.value)
     parser.add_argument("--seconds", type=float, default=60.0)
     parser.add_argument("--device-index", type=int, default=0)
-    parser.add_argument("--max-depth-m", type=float, default=2.0)
+    parser.add_argument("--max-field-m", type=float, default=2.0)
     parser.add_argument("--max-points", type=int, default=200_000)
-    parser.add_argument("--minimum-depth-m", type=float, default=0.15)
+    parser.add_argument("--minimum-depth-m", type=float, default=0.05)
     parser.add_argument("--maximum-depth-m", type=float, default=2.0)
     parser.add_argument("--no-temporal-filter", action="store_true")
     parser.add_argument("--no-spatial-filter", action="store_true")
     parser.add_argument("--no-hole-filling", action="store_true")
     parser.add_argument("--spatial-magnitude", type=int, default=1, help="空间滤波迭代次数，范围 1-5")
     parser.add_argument("--spatial-alpha", type=float, default=0.5, help="空间滤波当前像素权重，范围 0.1-1.0")
-    parser.add_argument("--hole-filling-mode", type=int, choices=(0, 1, 2), default=0, help="0=TOP，1=NEAREST，2=FAREST")
+    parser.add_argument("--hole-filling-mode", type=int, choices=(0, 1, 2), default=1, help="0=TOP，1=NEAREST，2=FAREST")
     return parser.parse_args()
 
 
@@ -107,7 +107,7 @@ def main() -> None:
         raise SystemExit(f"深度滤波参数无效：{error}") from error
     profile = G305_1280X800_30 if args.profile == "1280" else G305_848X480_60
     camera = OrbbecG305Camera(profile, AlignmentMode(args.alignment), args.device_index, depth_processing=processing)
-    result = CameraFilterComparisonCommand(camera, args.seconds, args.max_depth_m, args.max_points).run()
+    result = CameraFilterComparisonCommand(camera, args.seconds, args.max_field_m, args.max_points).run()
     print("\n=== Filter comparison result ===")
     print(f"success: {result.success}\nreason: {result.reason}\ndisplayed_frames: {result.displayed_frames}\nelapsed_s: {result.elapsed_s:.3f}")
     if result.error_message is not None:

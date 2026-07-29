@@ -201,11 +201,10 @@ class SensorCalibration:
 @dataclass(frozen=True, slots=True)
 class CameraCapabilities:
     """适配器静态声明的能力；实际可用 Profile 仍取决于当前设备。"""
-
     camera_id: str
     supported_profiles: tuple[CameraProfile, ...]
-    supports_hardware_alignment: bool
-    supports_software_alignment: bool
+    software_alignment_profiles: tuple[CameraProfile, ...]
+    hardware_alignment_profiles: tuple[CameraProfile, ...]
 
 
 @dataclass(frozen=True, slots=True)

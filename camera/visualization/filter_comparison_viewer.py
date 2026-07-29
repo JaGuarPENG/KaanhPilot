@@ -16,10 +16,10 @@ if TYPE_CHECKING:
 class FilterComparisonPointCloudViewer:
     """左侧显示未过滤点云，右侧显示同帧过滤后点云，不创建图像窗口。"""
 
-    def __init__(self, max_depth_m: float = 2.0, max_points: int = 200_000) -> None:
-        if max_depth_m <= 0.0 or max_points <= 0:
+    def __init__(self, max_field_m: float = 2.0, max_points: int = 200_000) -> None:
+        if max_field_m <= 0.0 or max_points <= 0:
             raise ValueError("最大显示深度和最大点数必须为正数")
-        self._max_depth_m = max_depth_m
+        self._max_field_m = max_field_m
         self._max_points = max_points
         self._is_open = True
         self._initialized_views: set[str] = set()
@@ -66,7 +66,7 @@ class FilterComparisonPointCloudViewer:
         # 从完整有组织点云按固定像素步长抽样，左右使用相同像素序列，便于比较。
         step = max(1, math.ceil(len(points) / self._max_points))
         points, colors = points[::step], colors[::step]
-        valid = np.isfinite(points).all(axis=1) & (points[:, 2] <= self._max_depth_m)
+        valid = np.isfinite(points).all(axis=1) & (points[:, 2] <= self._max_field_m)
         cloud.points = self._o3d.utility.Vector3dVector(camera_optical_to_open3d_display(points[valid]))
         cloud.colors = self._o3d.utility.Vector3dVector(colors[valid])
         window.update_geometry(cloud)

@@ -28,14 +28,13 @@ from camera.contracts.models import (
     SensorCalibration,
 )
 from camera.adapters.orbbec.filters import OrbbecDepthFilterChain
-from camera.adapters.orbbec.profiles import G305_SUPPORTED_PROFILES
+from camera.adapters.orbbec.profiles import G305_1280X800_30, G305_848X480_30, G305_SUPPORTED_PROFILES
 
 
 class OrbbecG305Camera(Camera):
     """使用第 ``device_index`` 台 Gemini 305 的独占 RGB-D 相机流。
 
-    ``AUTO`` 优先尝试硬件 D2C；若当前设备不支持完全匹配的硬件 Profile，
-    才明确回退到软件 D2C。两条路径输出相同的 RGB 像素坐标系观测契约。
+    优先使用软件 D2C 对齐，若请求硬件 D2C 且设备支持则使用硬件 D2C。目前只有848X480_30的profile支持硬件D2C。
 
     硬件 D2C 仅在预设的848x480分辨率下可用。
     """
@@ -43,7 +42,7 @@ class OrbbecG305Camera(Camera):
     def __init__(
         self,
         profile: CameraProfile,
-        alignment_mode: AlignmentMode = AlignmentMode.AUTO,
+        alignment_mode: AlignmentMode = AlignmentMode.SOFTWARE,
         device_index: int = 0,
         frame_timeout_ms: int = 1_000,
         startup_timeout_s: float = 8.0,
@@ -78,6 +77,8 @@ class OrbbecG305Camera(Camera):
         self._context: Any | None = None
         self._align_filter: Any | None = None
         self._depth_filter_chain: OrbbecDepthFilterChain | None = None
+
+        self._validate_requested_profile()
 
     @property
     def state(self) -> CameraState:
@@ -122,13 +123,12 @@ class OrbbecG305Camera(Camera):
             return self._depth_filter_chain.parameter_descriptors()
 
     
-    # TODO：1280的不能实现硬件D2C，这里缺少完整判断。
     def capabilities(self) -> CameraCapabilities:
         return CameraCapabilities(
-            camera_id=self._camera_id or f"orbbec-device-index-{self._device_index}",
+            camera_id=self._camera_id or f"G305-{self._device_index}",
             supported_profiles=G305_SUPPORTED_PROFILES,
-            supports_hardware_alignment=True,
-            supports_software_alignment=True,
+            software_alignment_profiles=G305_SUPPORTED_PROFILES,
+            hardware_alignment_profiles=(G305_848X480_30,) if G305_848X480_30 in G305_SUPPORTED_PROFILES else (),
         )
 
     def start(self) -> None:
@@ -450,6 +450,13 @@ class OrbbecG305Camera(Camera):
         point_cloud[..., 1][valid] = self._ray_y[valid] * depth_m[valid]
         point_cloud[..., 2][valid] = depth_m[valid]
         return point_cloud
+    
+
+    def _validate_requested_profile(self) -> None:
+        if self._requested_profile not in G305_SUPPORTED_PROFILES:
+            raise CameraProfileError(f"请求的 Profile {self._requested_profile} 不在 G305 支持列表中")
+        if self._requested_profile != G305_848X480_30 and self._requested_alignment == AlignmentMode.HARDWARE:
+            raise CameraProfileError("仅有 848x480@30 的 Profile 支持硬件 D2C 对齐")
 
 
 if __name__ == "__main__":

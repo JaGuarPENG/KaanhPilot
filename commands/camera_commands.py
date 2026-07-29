@@ -36,7 +36,7 @@ class CameraStreamViewerCommand:
         camera: Camera,
         duration_s: float = 10.0,
         show_point_cloud: bool = True,
-        max_depth_m: float = 2.0,
+        max_field_m: float = 2.0,
         max_points: int = 200_000,
     ) -> None:
         if duration_s <= 0.0:
@@ -44,7 +44,7 @@ class CameraStreamViewerCommand:
         self._camera = camera
         self._duration_s = duration_s
         self._show_point_cloud = show_point_cloud
-        self._max_depth_m = max_depth_m
+        self._max_field_m = max_field_m
         self._max_points = max_points
 
     def run(self) -> CameraStreamViewResult:
@@ -55,7 +55,7 @@ class CameraStreamViewerCommand:
         visualizer: ObservationVisualizer | None = None
         try:
             self._camera.start()
-            visualizer = ObservationVisualizer(self._show_point_cloud, self._max_depth_m, self._max_points)
+            visualizer = ObservationVisualizer(self._show_point_cloud, self._max_field_m, self._max_points)
             deadline = started_at + self._duration_s
             while time.monotonic() < deadline:
                 observation = self._camera.get_latest_observation()
@@ -129,7 +129,7 @@ def main() -> None:
         raise SystemExit(f"深度滤波参数无效：{error}") from error
     profile = G305_1280X800_30 if args.profile == "1280" else G305_848X480_60
     camera = OrbbecG305Camera(profile, AlignmentMode(args.alignment), args.device_index, depth_processing=depth_processing)
-    result = CameraStreamViewerCommand(camera, args.seconds, not args.no_point_cloud, args.max_depth_m, args.max_points).run()
+    result = CameraStreamViewerCommand(camera, args.seconds, not args.no_point_cloud, args.max_field_m, args.max_points).run()
     print("\n=== Camera stream result ===")
     print(f"success: {result.success}\nreason: {result.reason}\ndisplayed_frames: {result.displayed_frames}")
     print(f"elapsed_s: {result.elapsed_s:.3f}\nactual_profile: {result.actual_profile}\nactual_alignment: {result.actual_alignment}")

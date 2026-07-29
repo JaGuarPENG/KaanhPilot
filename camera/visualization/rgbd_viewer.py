@@ -23,10 +23,10 @@ class ObservationVisualizer:
     IMAGE_WINDOW = "G305 RGB-D | Q / ESC 退出"
     POINT_WINDOW = "G305 Point Cloud"
 
-    def __init__(self, show_point_cloud: bool = True, max_depth_m: float = 2.0, max_points: int = 200_000) -> None:
-        if max_depth_m <= 0.0 or max_points <= 0:
+    def __init__(self, show_point_cloud: bool = True, max_field_m: float = 2.0, max_points: int = 200_000) -> None:
+        if max_field_m <= 0.0 or max_points <= 0:
             raise ValueError("最大显示深度和最大点数必须为正数")
-        self.max_depth_m = max_depth_m
+        self.max_field_m = max_field_m
         self.max_points = max_points
         self.is_open = True
         self._cloud_view_initialized = False
@@ -78,13 +78,13 @@ class ObservationVisualizer:
         valid = observation.depth_m > 0.0
         overlay[valid] = cv2.addWeighted(rgb[valid], 0.55, depth[valid], 0.45, 0.0)
         self._label(rgb, f"RGB | frame={observation.frame_id}")
-        self._label(depth, f"Aligned depth | 0-{self.max_depth_m:.2f} m")
+        self._label(depth, f"Aligned depth | 0-{self.max_field_m:.2f} m")
         self._label(overlay, f"RGB + depth | timestamp={observation.capture_timestamp_ms} ms")
         blank = np.zeros_like(rgb)
         cv2.imshow(self.IMAGE_WINDOW, np.vstack((np.hstack((rgb, depth)), np.hstack((overlay, blank)))))
 
     def _depth_colormap(self, depth_m: np.ndarray) -> np.ndarray:
-        normalized = np.clip(depth_m / self.max_depth_m, 0.0, 1.0)
+        normalized = np.clip(depth_m / self.max_field_m, 0.0, 1.0)
         normalized[depth_m <= 0.0] = 0.0
         image = cv2.applyColorMap(((1.0 - normalized) * 255.0).astype(np.uint8), cv2.COLORMAP_TURBO)
         image[depth_m <= 0.0] = 0
@@ -99,7 +99,7 @@ class ObservationVisualizer:
         assert self._o3d is not None and self._cloud is not None and self._cloud_window is not None
         points = observation.point_cloud_m.reshape(-1, 3)
         colors = observation.rgb.reshape(-1, 3).astype(np.float64) / 255.0
-        valid = np.isfinite(points).all(axis=1) & (points[:, 2] <= self.max_depth_m)
+        valid = np.isfinite(points).all(axis=1) & (points[:, 2] <= self.max_field_m)
         points, colors = points[valid], colors[valid]
         if len(points) > self.max_points:
             step = math.ceil(len(points) / self.max_points)
