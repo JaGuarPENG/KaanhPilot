@@ -1,0 +1,50 @@
+# Python bytecode and tooling caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Virtual environments and local Python configuration
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Runtime logs and generated camera captures
+Log/
+save/cloud/
+save/pic/
+
+# Model weights and other large generated ML artifacts
+# *.pt
+# *.pth
+# *.onnx
+# *.engine
+
+# Local editor and OS files
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local secrets and machine-specific configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
