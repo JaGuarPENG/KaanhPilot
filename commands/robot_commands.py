@@ -8,7 +8,7 @@ class RobotCommandExecutor:
         self.robot = robot
 
     def move_init_pose(self):
-        self.robot.movej([0, 0, 150, -60, -90, 0], [100, 200, 100])
+        self.robot.movej([0, 0, 150, -150, -90, 0], [100, 200, 100])
 
     def move_to_offset_destination(self, offset_pq=[15,0,0,0.0, 0.13052619222005157, 0.0, 0.9914448613738104]):
         """给定相对偏移 PQ 测试 follower 到达目标点。

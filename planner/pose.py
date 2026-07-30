@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import math
+import numpy as np
 from typing import Sequence
 
 
@@ -126,6 +127,17 @@ def apply_tool_delta_to_pq(
         for index in range(3)
     ]
     return target_position + list(_normalize_quaternion(target_q))
+
+
+def quaternion_to_rotation(quaternion_xyzw: tuple[float, float, float, float]) -> np.ndarray:
+    """把 xyzw 四元数转换为 3x3 旋转矩阵，输入零范数会明确失败。"""
+    x, y, z, w = (float(value) for value in quaternion_xyzw)
+    norm = math.sqrt(x * x + y * y + z * z + w * w)
+    if norm < 1e-9:
+        raise ValueError("四元数不能为零")
+    x, y, z, w = x / norm, y / norm, z / norm, w / norm
+    return np.array(((1 - 2 * (y*y + z*z), 2 * (x*y - z*w), 2 * (x*z + y*w)), (2 * (x*y + z*w), 1 - 2 * (x*x + z*z), 2 * (y*z - x*w)), (2 * (x*z - y*w), 2 * (y*z + x*w), 1 - 2 * (x*x + y*y))), dtype=float)
+
 
 
 def _rotate_vector_by_quaternion(
