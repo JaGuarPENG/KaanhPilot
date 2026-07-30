@@ -14,8 +14,9 @@ import numpy as np
 from camera.contracts.errors import CameraError
 from camera.contracts.cam_structs import AlignedRGBDObservation
 from commands.yolo_command_support import add_common_arguments, build_camera, build_session, result_to_dict
-from perception.percept_struct import TargetPerceptionResult
-from perception.visualization import PerceptionPointCloudViewer
+from perception.percept_structs import TargetPerceptionResult
+from visualization.perception_viewer import PerceptionPointCloudViewer
+from visualization.rgb_overlay import draw_target_perception
 
 
 class AsyncResultViewer:
@@ -72,7 +73,7 @@ class AsyncResultViewer:
                 except queue.Empty:
                     continue
                 canvas = np.ascontiguousarray(observation.rgb[..., ::-1].copy())
-                _draw_result(cv2, canvas, result)
+                draw_target_perception(cv2, canvas, result)
                 cv2.imshow(window_name, canvas)
                 if cloud_viewer is not None and not cloud_viewer.update(result):
                     cloud_viewer.close()
@@ -104,33 +105,6 @@ class LatencyWindow:
             return None
         values = np.asarray(self._values, dtype=np.float64)
         return {"samples": float(len(values)), "mean": float(values.mean()), "p50": float(np.percentile(values, 50)), "p95": float(np.percentile(values, 95)), "p99": float(np.percentile(values, 99)), "max": float(values.max())}
-
-def _draw_result(cv2: object, canvas: np.ndarray, result: TargetPerceptionResult) -> None:
-    """绘制检测框、实际处理 ROI、抓取点与同帧计算耗时。"""
-    color = (0, 220, 0) if result.localization is not None and result.localization.has_target_point else (0, 180, 255)
-    if result.detection is not None:
-        x_min, y_min, x_max, y_max = result.detection.bbox_xyxy
-        cv2.rectangle(canvas, (x_min, y_min), (x_max, y_max), color, 2)
-        cv2.putText(canvas, f"{result.target_id} {result.detection.confidence:.2f}", (x_min, max(20, y_min - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
-        if result.localization is not None and result.localization.target_point_camera_m is not None:
-            center_x, center_y = result.detection.center_pixel
-            center_x = max(0, min(canvas.shape[1] - 1, round(center_x)))
-            center_y = max(0, min(canvas.shape[0] - 1, round(center_y)))
-            x, y, z = result.localization.target_point_camera_m
-            point_label = f"X={x:.3f} Y={y:.3f} Z={z:.3f} m"
-            cv2.drawMarker(canvas, (center_x, center_y), color, markerType=cv2.MARKER_CROSS, markerSize=16, thickness=2)
-            cv2.putText(canvas, point_label, (center_x + 10, min(canvas.shape[0] - 8, center_y + 20)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, color, 2)
-    lines = [f"status: {result.status.value}", f"frame: {result.frame_id}"]
-    if result.localization is not None:
-        if result.localization.roi is not None:
-            roi = result.localization.roi
-            cv2.rectangle(canvas, (roi.x_min, roi.y_min), (roi.x_max, roi.y_max), (255, 180, 0), 1)
-        lines.append(f"valid points: {result.localization.valid_point_count}")
-    if result.timing is not None:
-        lines.extend((f"YOLO: {result.timing.yolo_ms:.1f} ms", f"Locate: {result.timing.localization_ms:.1f} ms", f"Total: {result.timing.process_total_ms:.1f} ms"))
-    for index, line in enumerate(lines):
-        cv2.putText(canvas, line, (12, 28 + 24 * index), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="G305 实时指定目标检测、追踪与 ROI 点云定位")

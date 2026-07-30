@@ -11,7 +11,7 @@ from camera.adapters.orbbec.profiles import G305_1280X800_30, G305_848X480_60
 from camera.contracts.errors import CameraError
 from camera.contracts.interface import Camera
 from camera.contracts.cam_structs import AlignmentMode, CameraProfile, DepthProcessingConfig
-from camera.visualization.rgbd_viewer import ObservationVisualizer
+from visualization.camera_viewer import ObservationVisualizer
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,9 +96,9 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Gemini 305 RGB-D 与点云可视化命令")
     parser.add_argument("--profile", choices=("1280", "848"), default="848")
     parser.add_argument("--alignment", choices=tuple(mode.value for mode in AlignmentMode), default=AlignmentMode.AUTO.value)
-    parser.add_argument("--seconds", type=float, default=10.0)
+    parser.add_argument("--seconds", type=float, default=120.0)
     parser.add_argument("--device-index", type=int, default=0)
-    parser.add_argument("--max-depth-m", type=float, default=2.0)
+    parser.add_argument("--max-field-m", type=float, default=2.0)
     parser.add_argument("--max-points", type=int, default=200_000)
     parser.add_argument("--no-point-cloud", action="store_true")
     parser.add_argument("--temporal-filter", action="store_true", help="启用奥比中光官方时域滤波")

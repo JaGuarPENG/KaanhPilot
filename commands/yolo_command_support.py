@@ -8,7 +8,7 @@ from pathlib import Path
 from camera.adapters.orbbec.g305 import OrbbecG305Camera
 from camera.adapters.orbbec.profiles import G305_1280X800_30, G305_848X480_60
 from camera.contracts.cam_structs import AlignmentMode, DepthProcessingConfig
-from perception.percept_struct import LocalizationConfig, PixelROI, TargetPerceptionResult, Workspace3D
+from perception.percept_structs import LocalizationConfig, PixelROI, TargetPerceptionResult, Workspace3D
 from perception.roi_localizer import RoiPointCloudLocalizer
 from perception.session import TargetPerceptionSession
 from perception.target_tracker import SingleTargetTracker, TrackerConfig

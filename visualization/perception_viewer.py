@@ -1,20 +1,18 @@
-"""只消费感知诊断结果的 Open3D 点云显示器。"""
+"""感知层 ROI 最终内点与抓取点的 Open3D 显示器。"""
 
 from __future__ import annotations
 
-from typing import Any
-
 import numpy as np
 
-from camera.visualization.rgbd_viewer import camera_optical_to_open3d_display
-from perception.percept_struct import TargetPerceptionResult
+from perception.percept_structs import TargetPerceptionResult
+from visualization.coordinates import camera_optical_to_open3d_display
 
 
 class PerceptionPointCloudViewer:
     """显示最终 ROI 内点和抓取点，不打开相机也不影响感知计算。
 
-    调用者必须在同一线程创建、更新、销毁此对象。实时命令将它放在独立
-    显示线程，主感知循环只向该线程提交最新结果。
+    调用者必须在同一线程创建、更新和销毁此对象。实时命令把它放在显示
+    线程，后端只提交最新结果，因而 Open3D 刷新不会阻塞 YOLO 或点云定位。
     """
 
     def __init__(self, title: str = "YOLO ROI Filtered Point Cloud") -> None:
@@ -38,7 +36,7 @@ class PerceptionPointCloudViewer:
         return self._opened
 
     def update(self, result: TargetPerceptionResult) -> bool:
-        """用同一批最终深度内点更新点云和抓取点标记。"""
+        """更新同一批最终深度内点和由它们得到的抓取点标记。"""
         if not self._opened:
             return False
         inspection = None if result.localization is None else result.localization.inspection
@@ -52,22 +50,19 @@ class PerceptionPointCloudViewer:
                 self._window.reset_view_point(True)
                 self._has_view = True
         else:
-            # 本帧没有可显示的最终内点时必须清空旧几何，不能误把上一帧当成当前结果。
+            # 本帧无有效内点时清空旧点，不能让操作者把上一帧误认为当前结果。
             self._cloud.points = self._o3d.utility.Vector3dVector(np.empty((0, 3), dtype=np.float64))
             self._cloud.colors = self._o3d.utility.Vector3dVector(np.empty((0, 3), dtype=np.float64))
             self._window.update_geometry(self._cloud)
 
         if result.localization is not None and result.localization.target_point_camera_m is not None:
             target = np.asarray(result.localization.target_point_camera_m, dtype=np.float64).reshape(1, 3)
-            # Open3D 的显示变换只用于观察，绝不回写定位坐标或机器人输入。
             displayed_target = camera_optical_to_open3d_display(target)[0]
             self._target_marker.translate(displayed_target - self._target_marker.get_center(), relative=True)
-            self._window.update_geometry(self._target_marker)
         else:
-            # 把标记移出可视区域；Open3D 保持同一 geometry 可避免频繁增删对象。
-            hidden_target = np.array((0.0, 0.0, -100.0), dtype=np.float64)
-            self._target_marker.translate(hidden_target - self._target_marker.get_center(), relative=True)
-            self._window.update_geometry(self._target_marker)
+            # 复用一个 geometry，避免每帧增删对象；隐藏位置不会影响任何传感器坐标数据。
+            self._target_marker.translate(np.array((0.0, 0.0, -100.0)) - self._target_marker.get_center(), relative=True)
+        self._window.update_geometry(self._target_marker)
 
         if self._window.poll_events() is False:
             self._opened = False

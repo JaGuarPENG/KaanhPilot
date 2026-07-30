@@ -9,14 +9,14 @@ from pathlib import Path
 
 from commands.yolo_command_support import add_common_arguments, build_session, result_to_dict
 from perception.saved_observation import load_saved_observation
-from perception.visualization import PerceptionPointCloudViewer
+from visualization.perception_viewer import PerceptionPointCloudViewer
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="离线用 PNG 检测指定目标，再用同名 NPZ 点云显示最终 ROI 与抓取点")
     add_common_arguments(parser)
-    parser.add_argument("--image", type=Path, default=Path("save/pic/20260729_104730_128875.png"), help="YOLO 输入图片，如 save/pic/1.png")
-    parser.add_argument("--cloud-npz", type=Path, default=Path("save/cloud/20260729_104730_128875.npz"), help="与图片同名的点云，如 save/cloud/1.npz")
+    parser.add_argument("--image", type=Path, default=Path("save/pic/20260730_102822_267313.png"), help="YOLO 输入图片，如 save/pic/1.png")
+    parser.add_argument("--cloud-npz", type=Path, default=Path("save/cloud/20260730_102822_267313.npz"), help="与图片同名的点云，如 save/cloud/1.npz")
     parser.add_argument("--no-display", action="store_true", help="只输出 JSON 和耗时，不打开 Open3D 窗口")
     return parser.parse_args()
 

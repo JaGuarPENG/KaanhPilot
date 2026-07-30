@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 
 from camera.contracts.cam_structs import AlignedRGBDObservation
-from perception.percept_struct import ProcessingTiming, TargetPerceptionResult, TargetStatus
+from perception.percept_structs import ProcessingTiming, TargetPerceptionResult, TargetStatus
 from perception.roi_localizer import RoiPointCloudLocalizer
 from perception.target_tracker import SingleTargetTracker
 from yolo.detector import Detector

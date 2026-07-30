@@ -1,4 +1,4 @@
-"""只消费厂商无关 RGB-D 观测的本地可视化工具。"""
+"""RGB-D 相机观测的本地诊断查看器。"""
 
 from __future__ import annotations
 
@@ -8,28 +8,23 @@ from typing import TYPE_CHECKING
 import cv2
 import numpy as np
 
+from visualization.coordinates import camera_optical_to_open3d_display
+
 if TYPE_CHECKING:
     from camera.contracts.cam_structs import AlignedRGBDObservation
 
 
-def camera_optical_to_open3d_display(camera_points_m: np.ndarray) -> np.ndarray:
-    """将 X 右、Y 下、Z 前的相机光学坐标转换为 Open3D 显示坐标。"""
-    return camera_points_m * np.array([1.0, -1.0, -1.0], dtype=np.float64)
-
-
 class ObservationVisualizer:
-    """显示 RGB、对齐深度和交互式彩色点云；Q、ESC 或关闭图像窗口会退出。"""
+    """显示 RGB、对齐深度和完整点云；只读取 Camera 公共观测。"""
 
-    IMAGE_WINDOW = "G305 RGB-D | Q / ESC 退出"
+    IMAGE_WINDOW = "G305 RGB-D | Q / ESC exit"
     POINT_WINDOW = "G305 Point Cloud"
 
     def __init__(self, show_point_cloud: bool = True, max_field_m: float = 2.0, max_points: int = 200_000) -> None:
         if max_field_m <= 0.0 or max_points <= 0:
             raise ValueError("最大显示深度和最大点数必须为正数")
-        self.max_field_m = max_field_m
-        self.max_points = max_points
-        self.is_open = True
-        self._cloud_view_initialized = False
+        self.max_field_m, self.max_points = max_field_m, max_points
+        self.is_open, self._cloud_view_initialized = True, False
         self._o3d = self._cloud = self._cloud_window = None
         cv2.namedWindow(self.IMAGE_WINDOW, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(self.IMAGE_WINDOW, 1280, 900)
@@ -37,7 +32,7 @@ class ObservationVisualizer:
             self._open_cloud_window()
 
     def update(self, observation: "AlignedRGBDObservation") -> bool:
-        """显示一帧最新观测，返回 False 代表用户已请求结束。"""
+        """以当前观测刷新窗口；返回 False 表示用户关闭了诊断视图。"""
         if not self.is_open:
             return False
         self._show_images(observation)
@@ -59,7 +54,6 @@ class ObservationVisualizer:
     def _open_cloud_window(self) -> None:
         try:
             import open3d as o3d
-
             self._o3d = o3d
             self._cloud = o3d.geometry.PointCloud()
             self._cloud_window = o3d.visualization.Visualizer()
@@ -67,8 +61,8 @@ class ObservationVisualizer:
             self._cloud_window.add_geometry(self._cloud)
             self._cloud_window.add_geometry(o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1))
         except Exception as error:
-            # 点云窗口不能开启时，RGB-D 图像仍可用于相机诊断。
-            print(f"[Camera Viewer] Open3D 点云窗口不可用：{error}")
+            # Open3D 不可用不应阻止 RGB/深度诊断。
+            print(f"[Camera Viewer] Open3D 点云窗口不可用: {error}")
             self._o3d = self._cloud = self._cloud_window = None
 
     def _show_images(self, observation: "AlignedRGBDObservation") -> None:
@@ -80,20 +74,7 @@ class ObservationVisualizer:
         self._label(rgb, f"RGB | frame={observation.frame_id}")
         self._label(depth, f"Aligned depth | 0-{self.max_field_m:.2f} m")
         self._label(overlay, f"RGB + depth | timestamp={observation.capture_timestamp_ms} ms")
-        blank = np.zeros_like(rgb)
-        cv2.imshow(self.IMAGE_WINDOW, np.vstack((np.hstack((rgb, depth)), np.hstack((overlay, blank)))))
-
-    def _depth_colormap(self, depth_m: np.ndarray) -> np.ndarray:
-        normalized = np.clip(depth_m / self.max_field_m, 0.0, 1.0)
-        normalized[depth_m <= 0.0] = 0.0
-        image = cv2.applyColorMap(((1.0 - normalized) * 255.0).astype(np.uint8), cv2.COLORMAP_TURBO)
-        image[depth_m <= 0.0] = 0
-        return image
-
-    @staticmethod
-    def _label(image: np.ndarray, text: str) -> None:
-        cv2.putText(image, text, (16, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 3, cv2.LINE_AA)
-        cv2.putText(image, text, (16, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (20, 20, 20), 1, cv2.LINE_AA)
+        cv2.imshow(self.IMAGE_WINDOW, np.vstack((np.hstack((rgb, depth)), np.hstack((overlay, np.zeros_like(rgb))))))
 
     def _show_cloud(self, observation: "AlignedRGBDObservation") -> None:
         assert self._o3d is not None and self._cloud is not None and self._cloud_window is not None
@@ -104,38 +85,37 @@ class ObservationVisualizer:
         if len(points) > self.max_points:
             step = math.ceil(len(points) / self.max_points)
             points, colors = points[::step], colors[::step]
-        self._cloud.points = self._o3d.utility.Vector3dVector(self._to_display_coordinates(points))
+        self._cloud.points = self._o3d.utility.Vector3dVector(camera_optical_to_open3d_display(points))
         self._cloud.colors = self._o3d.utility.Vector3dVector(colors)
         self._cloud_window.update_geometry(self._cloud)
         if len(points) and not self._cloud_view_initialized:
-            # The window starts with an empty cloud and a 0.1 m coordinate frame.
-            # Fit the first real cloud once without overriding later user navigation.
             self._cloud_window.reset_view_point(True)
             self._cloud_view_initialized = True
         self._cloud_window.poll_events()
         self._cloud_window.update_renderer()
 
+    def _depth_colormap(self, depth_m: np.ndarray) -> np.ndarray:
+        normalized = np.clip(depth_m / self.max_field_m, 0.0, 1.0)
+        normalized[depth_m <= 0.0] = 0.0
+        image = cv2.applyColorMap(((1.0 - normalized) * 255.0).astype(np.uint8), cv2.COLORMAP_TURBO)
+        image[depth_m <= 0.0] = 0
+        return image
+
     @staticmethod
     def _to_display_coordinates(camera_points_m: np.ndarray) -> np.ndarray:
-        """将相机光学坐标转换为 Open3D 的便于观察的右手显示坐标。
-
-        公共点云契约保持 camera_optical_frame：X 向右、Y 向下、Z 向前。
-        Open3D 的惯用观察坐标以 Y 向上，因此显示时绕 X 轴旋转 180 度，
-        得到 X 向右、Y 向上、Z 朝观察者。此变换仅用于窗口渲染，绝不能
-        用于定位、标定或后续机器人坐标变换。
-        """
+        """兼容既有测试入口；实现位于 visualization.coordinates。"""
         return camera_optical_to_open3d_display(camera_points_m)
 
+    @staticmethod
+    def _label(image: np.ndarray, text: str) -> None:
+        cv2.putText(image, text, (16, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 3, cv2.LINE_AA)
+        cv2.putText(image, text, (16, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (20, 20, 20), 1, cv2.LINE_AA)
+
     def _handle_events(self) -> None:
-        key = cv2.waitKey(1) & 0xFF
-        if key in (ord("q"), ord("Q"), 27):
+        if cv2.waitKey(1) & 0xFF in (ord("q"), ord("Q"), 27):
             self.is_open = False
             return
         try:
             self.is_open = cv2.getWindowProperty(self.IMAGE_WINDOW, cv2.WND_PROP_VISIBLE) >= 1
         except cv2.error:
             self.is_open = False
-
-
-if __name__ == "__main__":
-    print("请运行 python -m commands.camera_commands 测试可视化。")

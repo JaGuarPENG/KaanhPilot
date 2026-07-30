@@ -11,7 +11,7 @@ import numpy as np
 
 from camera.adapters.orbbec.profiles import G305_848X480_60
 from camera.contracts.cam_structs import AlignedRGBDObservation, AlignmentMode, CameraDistortion, CameraIntrinsics, RigidTransform, SensorCalibration
-from perception.percept_struct import LocalizationConfig, TargetStatus
+from perception.percept_structs import LocalizationConfig, TargetStatus
 from perception.roi_localizer import RoiPointCloudLocalizer
 from perception.saved_observation import load_saved_observation
 from perception.session import TargetPerceptionSession

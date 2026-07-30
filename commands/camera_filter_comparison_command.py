@@ -10,7 +10,7 @@ from camera.adapters.orbbec.g305 import OrbbecG305Camera
 from camera.adapters.orbbec.profiles import G305_1280X800_30, G305_848X480_60
 from camera.contracts.errors import CameraError
 from camera.contracts.cam_structs import AlignmentMode, DepthProcessingConfig
-from camera.visualization.filter_comparison_viewer import FilterComparisonPointCloudViewer
+from visualization.filter_comparison_viewer import FilterComparisonPointCloudViewer
 
 
 @dataclass(frozen=True, slots=True)

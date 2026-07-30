@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from camera.contracts.cam_structs import AlignedRGBDObservation
-from perception.percept_struct import LocalizationConfig, LocalizationResult, PixelROI, PointCloudInspection
+from perception.percept_structs import LocalizationConfig, LocalizationResult, PixelROI, PointCloudInspection
 from yolo.contracts.yolo_structs import Detection
 
 
