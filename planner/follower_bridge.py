@@ -107,6 +107,11 @@ class FollowerBridge:
             return self._debug
 
     @property
+    def debug_state(self) -> BridgeState:
+        """调试状态兼容别名，供测试和外部显示器读取最新不可变快照。"""
+        return self.display_state
+
+    @property
     def latest_joints_rad(self) -> np.ndarray | None:
         """桥接器最后一次控制端口读取到的六轴关节角，单位为弧度。"""
         with self._lock:
@@ -256,5 +261,4 @@ class FollowerBridge:
         tool_z_in_base = quaternion_to_rotation(tuple(self._start_pq[3:]))[:, 2]
         target = np.asarray(point_m) - self._config.approach_distance_m * tool_z_in_base
         return tuple(float(value) for value in target)
-
 

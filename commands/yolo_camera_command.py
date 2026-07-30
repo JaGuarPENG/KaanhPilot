@@ -51,6 +51,11 @@ class AsyncResultViewer:
         self._closed.set()
         self._thread.join(timeout=1.0)
 
+    @property
+    def is_closed(self) -> bool:
+        """显示窗口是否已由用户关闭；集成命令据此统一结束测试会话。"""
+        return self._closed.is_set()
+
     def _run(self) -> None:
         try:
             import cv2
