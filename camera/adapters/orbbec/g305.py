@@ -47,17 +47,18 @@ class OrbbecG305Camera(Camera):
         frame_timeout_ms: int = 1_000,
         startup_timeout_s: float = 8.0,
         depth_processing: DepthProcessingConfig = DepthProcessingConfig(),
+        observation_mode: str = "FINAL_ONLY",
     ) -> None:
         if device_index < 0:
             raise ValueError("设备索引不能为负数")
         if frame_timeout_ms <= 0 or startup_timeout_s <= 0:
             raise ValueError("超时时间必须为正数")
-        self._requested_profile = profile
-        self._requested_alignment = alignment_mode
-        self._device_index = device_index
-        self._frame_timeout_ms = frame_timeout_ms
-        self._startup_timeout_s = startup_timeout_s
-        self._depth_processing = depth_processing
+        self._requested_profile = profile #请求的 profile
+        self._requested_alignment = alignment_mode #请求的对齐模式
+        self._device_index = device_index #设备id
+        self._frame_timeout_ms = frame_timeout_ms #一帧最长等待时间
+        self._startup_timeout_s = startup_timeout_s #启动超时时间
+        self._depth_processing = depth_processing #深度处理配置
 
         self._lock = threading.RLock()
         self._state = CameraState.STOPPED
@@ -77,6 +78,10 @@ class OrbbecG305Camera(Camera):
         self._context: Any | None = None
         self._align_filter: Any | None = None
         self._depth_filter_chain: OrbbecDepthFilterChain | None = None
+        self._observation_mode = observation_mode
+        if self._observation_mode not in ("FINAL_ONLY", "RAW_AND_FINAL"):
+            raise ValueError("observation_mode 必须为 FINAL_ONLY 或 RAW_AND_FINAL") 
+
 
         self._validate_requested_profile()
 
@@ -112,6 +117,13 @@ class OrbbecG305Camera(Camera):
     def depth_processing(self) -> DepthProcessingConfig:
         """返回当前实例请求并写入每帧观测的深度处理配置。"""
         return self._depth_processing
+    
+    def set_observation_mode(self, mode: str) -> None:
+        """设置观测模式。"""
+        if mode not in ("FINAL_ONLY", "RAW_AND_FILTERED"):
+            raise ValueError("observation_mode 必须为 FINAL_ONLY 或 RAW_AND_FILTERED")
+        self._observation_mode = mode
+        return True
 
     def get_depth_filter_parameter_schemas(self) -> tuple[FilterParameterDescriptor, ...]:
         """返回当前已启动官方滤波链支持的参数描述，仅用于诊断和配置设计。"""
@@ -184,34 +196,17 @@ class OrbbecG305Camera(Camera):
                 raise self._last_error
             return self._latest_observation
 
-    
-    
-    # TODO：这里是调试代码，后续可以考虑删了
-    def get_latest_unfiltered_observation(self) -> AlignedRGBDObservation | None:
-        """返回与最新过滤后观测同源的未过滤观测。
-
-        这是 G305 滤波诊断专用接口。常规 Perception 只能使用
-        get_latest_observation() 的已配置处理结果，避免绕过任务配置。
-        """
-        with self._lock:
-            if self._state == CameraState.FAILED and self._last_error is not None:
-                raise self._last_error
-            return self._latest_unfiltered_observation
-
     def get_latest_filter_comparison_observations(self) -> tuple[AlignedRGBDObservation, AlignedRGBDObservation] | None:
-        """原子读取同一 frame_id 的（未过滤，过滤后）诊断观测对。"""
+        """读取同一 frame_id 的（未过滤，过滤后）RGBD图像观测。"""
         with self._lock:
+            if self._observation_mode != "RAW_AND_FILTERED":
+                raise CameraStateError("相机未设置 RAW_AND_FILTERED 模式，无法获取滤波对比观测")
             if self._state == CameraState.FAILED and self._last_error is not None:
                 raise self._last_error
             if self._latest_unfiltered_observation is None or self._latest_observation is None:
-                return None
+                raise CameraStateError("相机尚未发布滤波对比观测")
             return self._latest_unfiltered_observation, self._latest_observation
 
-    
-    
-    
-    
-    
     def _stream_main(self) -> None:
         pipeline: Any | None = None
         try:
@@ -243,10 +238,17 @@ class OrbbecG305Camera(Camera):
 
             while not self._stop_event.is_set():
                 frames = self._wait_complete_frames(pipeline, ob, actual_alignment)
-                raw_observation, observation = self._make_observations(frames, ob, actual_alignment, calibration)
-                with self._lock:
-                    self._latest_observation = observation
-                    self._latest_unfiltered_observation = raw_observation
+                observation = self._make_observations(frames, ob, actual_alignment, calibration)[1]
+                if self._observation_mode == "FINAL_ONLY":
+                    with self._lock:
+                        self._latest_observation = observation
+                        self._latest_unfiltered_observation = None
+                else:
+                    raw_observation, observation = self._make_observations(frames, ob, actual_alignment, calibration)
+                    with self._lock:
+                        self._latest_observation = observation
+                        self._latest_unfiltered_observation = raw_observation
+       
         except Exception as error:
             if not self._stop_event.is_set():
                 camera_error = error if isinstance(error, CameraError) else CameraStreamError(str(error))
@@ -409,9 +411,13 @@ class OrbbecG305Camera(Camera):
         if timestamp < 0:
             raise CameraStreamError("相机未提供有效的硬件采集时间戳")
         self._frame_id += 1
-        raw_observation = AlignedRGBDObservation(self._frame_id, timestamp, rgb, raw_depth_m, raw_point_cloud, self._requested_profile, alignment, calibration, DepthProcessingConfig())
-        filtered_observation = AlignedRGBDObservation(self._frame_id, timestamp, rgb, filtered_depth_m, filtered_point_cloud, self._requested_profile, alignment, calibration, self._depth_processing)
-        return raw_observation, filtered_observation
+        if self._observation_mode == "FINAL_ONLY":
+            observation = AlignedRGBDObservation(self._frame_id, timestamp, rgb, filtered_depth_m, filtered_point_cloud, self._requested_profile, alignment, calibration, self._depth_processing)
+            return observation, observation
+        else:
+            raw_observation = AlignedRGBDObservation(self._frame_id, timestamp, rgb, raw_depth_m, raw_point_cloud, self._requested_profile, alignment, calibration, DepthProcessingConfig())
+            filtered_observation = AlignedRGBDObservation(self._frame_id, timestamp, rgb, filtered_depth_m, filtered_point_cloud, self._requested_profile, alignment, calibration, self._depth_processing)
+            return raw_observation, filtered_observation
 
     @staticmethod
     def _depth_frame_to_m(depth_frame: Any) -> np.ndarray:
@@ -458,8 +464,3 @@ class OrbbecG305Camera(Camera):
         if self._requested_profile != G305_848X480_30 and self._requested_alignment == AlignmentMode.HARDWARE:
             raise CameraProfileError("仅有 848x480@30 的 Profile 支持硬件 D2C 对齐")
 
-
-if __name__ == "__main__":
-    from camera.demo import main
-
-    main()

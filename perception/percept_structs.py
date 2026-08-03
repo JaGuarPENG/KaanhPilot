@@ -57,8 +57,6 @@ class LocalizationConfig:
     """ROI 点云过滤参数，所有物理范围由命令调用者显式指定。
     
     参数表：
-    - minimum_depth_m: 可选的最小深度（米），如果未指定则不限制。
-    - maximum_depth_m: 可选的最大深度（米），如果未指定则不限制。
     - static_roi: 可选的静态像素 ROI，所有检测框必须在此 ROI 内部才能进行点云定位。
     - workspace: 可选的 3D 工作空间，所有点云必须在此工作空间内才能进行点云定位。
     - roi_shrink_ratio: ROI 收缩比例，默认 0.10，表示在检测框周围收缩 10% 的 ROI 用于点云定位。
@@ -67,8 +65,6 @@ class LocalizationConfig:
 
     """
 
-    minimum_depth_m: float | None = None
-    maximum_depth_m: float | None = None
     static_roi: PixelROI | None = None
     workspace: Workspace3D | None = None
     roi_shrink_ratio: float = 0.10
@@ -76,10 +72,6 @@ class LocalizationConfig:
     depth_inlier_half_width_m: float = 0.05
 
     def __post_init__(self) -> None:
-        if (self.minimum_depth_m is None) != (self.maximum_depth_m is None):
-            raise ValueError("最小和最大深度必须同时指定")
-        if self.minimum_depth_m is not None and (self.minimum_depth_m < 0 or self.maximum_depth_m is None or self.maximum_depth_m <= self.minimum_depth_m):
-            raise ValueError("深度范围必须满足 0 <= minimum < maximum")
         if not 0.0 <= self.roi_shrink_ratio < 0.5:
             raise ValueError("ROI 收缩比例必须位于 [0, 0.5)")
         if self.minimum_valid_points < 1 or self.depth_inlier_half_width_m <= 0.0:

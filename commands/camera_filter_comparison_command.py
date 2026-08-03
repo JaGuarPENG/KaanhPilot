@@ -36,6 +36,7 @@ class CameraFilterComparisonCommand:
         self._duration_s = duration_s
         self._max_field_m = max_field_m
         self._max_points = max_points
+        self._camera.set_observation_mode("RAW_AND_FILTERED")
 
     def run(self) -> FilterComparisonResult:
         started_at = time.monotonic()

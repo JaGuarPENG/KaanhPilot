@@ -59,18 +59,16 @@ class RoiPointCloudLocalizer:
         roi = PixelROI(x_min + shrink_x, y_min + shrink_y, x_max - shrink_x, y_max - shrink_y)
         return roi.intersect(self._config.static_roi) if self._config.static_roi is not None else roi
 
+    # 目前想不到这个有啥用
     def _accepted_point_mask(self, points: np.ndarray) -> np.ndarray:
         """返回通过 NaN、用户深度范围和 3D 工作空间筛选的布尔掩码。"""
         mask = np.isfinite(points).all(axis=1)
-        if self._config.minimum_depth_m is not None:
-            mask &= points[:, 2] >= self._config.minimum_depth_m
-            mask &= points[:, 2] <= self._config.maximum_depth_m  # 已由配置校验保证不为 None。
         if self._config.workspace is not None:
             minimum = np.asarray(self._config.workspace.minimum_m, dtype=np.float32)
             maximum = np.asarray(self._config.workspace.maximum_m, dtype=np.float32)
             mask &= ((points >= minimum) & (points <= maximum)).all(axis=1)
         return mask
-
+    # 拿来输出单张点云用的
     def _inspection(self, points: np.ndarray, colors: np.ndarray) -> PointCloudInspection | None:
         """只有诊断模式复制最终点云，避免常规实时流程产生不必要的内存分配。"""
         if not self._collect_inspection:

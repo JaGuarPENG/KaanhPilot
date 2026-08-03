@@ -1,0 +1,27 @@
+{
+  "robot_ip": "192.168.1.10",
+  "control_port": 5999,
+  "udp_port": 9998,
+  "user": "Engineer",
+  "password": "000000",
+  "sim_base_from_camera": {
+    "translation_m": [0.3, 0.0, 0.5],
+    "quaternion_xyzw": [-0.5, 0.5, -0.5, 0.5]
+  },
+  "allow_identity_extrinsic": false,
+  "frequency_hz": 8.0,
+  "approach_distance_m": 0.05,
+  "hold_after_s": 0.5,
+  "stop_after_s": 2.0,
+  "profile": "848@60",
+  "minimum_depth_m": 0.2,
+  "maximum_depth_m": 2.0,
+  "warmup_seconds": 1.0,
+  "roi_shrink_ratio": 0.10,
+  "minimum_valid_points": 10,
+  "depth_inlier_half_width_m": 0.05,
+  "minimum_track_iou": 0.3,
+  "maximum_center_distance_ratio": 0.2,
+  "maximum_missing_frames": 5
+  
+}

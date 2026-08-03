@@ -45,7 +45,7 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--maximum-center-distance-ratio", type=float, default=0.20)
 
 
-def build_camera(args: argparse.Namespace) -> OrbbecG305Camera:
+def build_orb_camera(args: argparse.Namespace) -> OrbbecG305Camera:
     """按命令参数创建相机；只使用既有 Camera 公共接口，不修改相机模块。"""
     profile = G305_1280X800_30 if args.profile == "1280" else G305_848X480_60
     processing = DepthProcessingConfig(minimum_depth_m=args.minimum_depth_m, maximum_depth_m=args.maximum_depth_m)
