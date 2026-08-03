@@ -10,14 +10,31 @@ from __future__ import annotations
 import argparse
 import numpy as np
 
-from planner.follower_bridge import FollowerBridgeConfig, BridgeState
+# from planner.follower_bridge import FollowerBridgeConfig, BridgeState
 from planner.pose import quaternion_to_rotation
+
+
+from dataclasses import dataclass
+from typing import Protocol
+
+@dataclass(frozen=True, slots=True)
+class FollowerSceneConfig:
+    camera_translation_m: tuple[float, float, float]
+    camera_quaternion_xyzw: tuple[float, float, float, float]
+    camera_axis_length_m: float = 0.12
+
+
+class FollowerDisplayState(Protocol):
+    status: str
+    raw_point_m: tuple[float, float, float] | None
+    filtered_point_m: tuple[float, float, float] | None
+    tcp_target_m: tuple[float, float, float] | None
 
 
 class FollowerIntegrationViewer:
     """PyPlot 调试窗口，展示机器人、固定相机、原始/滤波/TCP 三类点。"""
 
-    def __init__(self, config: FollowerBridgeConfig) -> None:
+    def __init__(self, config: FollowerSceneConfig) -> None:
         import roboticstoolbox as rtb
         from robot.robot_dh import create_ka_ur
 
@@ -34,7 +51,7 @@ class FollowerIntegrationViewer:
         self._markers: dict[str, object] = {}
         self._draw_camera()
 
-    def update(self, joints_rad: np.ndarray | None, state: BridgeState) -> bool:
+    def update(self, joints_rad: np.ndarray | None, state: FollowerDisplayState) -> bool:
         """更新机器人关节和三个目标点；窗口关闭时返回 False。"""
         if joints_rad is not None and np.asarray(joints_rad).shape == (6,):
             self._robot.q = np.asarray(joints_rad, dtype=float)
@@ -82,9 +99,13 @@ def main() -> None:
     parser.add_argument("--quaternion", type=float, nargs=4, default=(-0.5, 0.5, -0.5, 0.5))
     parser.add_argument("--raw-point-m", type=float, nargs=3, default=(0.2, 0.0, 0.4))
     args = parser.parse_args()
-    config = FollowerBridgeConfig(tuple(args.translation_m), tuple(args.quaternion))
+    config = FollowerSceneConfig(
+        camera_translation_m=tuple(args.translation_m),
+        camera_quaternion_xyzw=tuple(args.quaternion),
+        camera_axis_length_m=0.12
+    )
     viewer = FollowerIntegrationViewer(config)
-    state = BridgeState(
+    state = FollowerDisplayState(
         status="独立参数检查",
         raw_point_m=tuple(args.raw_point_m),
         filtered_point_m=tuple(args.raw_point_m),

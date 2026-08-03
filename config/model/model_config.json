@@ -1,0 +1,6 @@
+﻿{
+  "model_path": "model/yolov8_0728.pt",
+  "labels_path": "model/yolov8_0728.labels.yaml",
+  "confidence": 0.45,
+  "iou": 0.7
+}

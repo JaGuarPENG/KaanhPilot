@@ -1,0 +1,12 @@
+﻿{
+    "profile": "848@60",
+    "warmup_seconds": 1.0,
+    "temporal_enabled": false,
+    "spatial_enabled": false,
+    "hole_filling_enabled": false,
+    "minimum_depth_m": 0.2,
+    "maximum_depth_m": 2.0,
+    "spatial_magnitude": 1,
+    "spatial_alpha": 0.5,
+    "hole_filling_mode": 1
+}

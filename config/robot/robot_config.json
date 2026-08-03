@@ -1,0 +1,8 @@
+﻿{
+  "robot_ip": "192.168.1.10",
+  "control_port": 5999,
+  "udp_port": 9998,
+  "timeout_s": 5.0,
+  "user": "Engineer",
+  "password": "000000"
+}

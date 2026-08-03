@@ -9,6 +9,17 @@ from robot.follower_udp_client import FollowerUdpClient
 from robot.robot_state import RobotState, parse_robot_state
 
 class KaanhRobotBackend:
+    """Kaanh 机器人后端客户端
+    
+    输入参数表：
+    - ip: 机器人 IP 地址
+    - port: WebSocket 控制端口 (默认 5999)
+    - udp_port: UDP 端口 (默认 9998)
+    - timeout: 连接超时时间 (默认 10 秒)
+    
+    """
+
+
     def __init__(self, ip, port=5999, udp_port=9998, timeout=10):
         self.uri = f"ws://{ip}:{port}"
         self.ws = None
