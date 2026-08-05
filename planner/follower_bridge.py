@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
 import threading
 import time
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from perception.percept_structs import TargetPerceptionResult, TargetStatus
+from perception.percept_structs import TargetStatus
+from planner.camera_transform import TransformResult
 from planner.pose import calculate_pq_delta, quaternion_to_rotation
 from planner.target_position_filter import TargetPositionFilter
 
@@ -39,12 +39,9 @@ class BridgeState:
 class FollowerBridgeConfig:
     """Follower 桥接器配置。
 
-    ``camera_translation_m``、``camera_quaternion_xyzw`` 共同表示
     ``T_sim_base_from_camera``。接近距离沿启动时工具负 Z 轴施加。
 
     参数表：
-    - camera_translation_m: 相机在仿真中相对于原点（机器人基座）平移，单位为米。
-    - camera_quaternion_xyzw: 相机在仿真中相对于原点的旋转四元数，xyzw 顺序。
     - frequency_hz: 向控制器下发 follower 的频率，单位为 Hz
     - approach_distance_m: follower 目标点沿工具负 Z 轴的接近距离，单位为米
     - hold_after_s: 目标丢失后保持原地等待的时间，单位为秒
@@ -53,8 +50,6 @@ class FollowerBridgeConfig:
 
     """
 
-    camera_translation_m: tuple[float, float, float]
-    camera_quaternion_xyzw: tuple[float, float, float, float]
     frequency_hz: float = 8.0
     approach_distance_m: float = 0.1
     hold_after_s: float = 0.5
@@ -65,15 +60,6 @@ class FollowerBridgeConfig:
             raise ValueError("follower 频率必须为正，接近距离不能为负")
         if not 0 <= self.hold_after_s < self.stop_after_s:
             raise ValueError("必须满足 0 <= hold_after_s < stop_after_s")
-        translation = np.asarray(self.camera_translation_m, dtype=float)
-        quat = np.asarray(self.camera_quaternion_xyzw, dtype=float)
-        if translation.shape != (3,) or quat.shape != (4,) or not np.isfinite(np.r_[translation, quat]).all():
-            raise ValueError("外参必须由有限的三维平移和四元数组成")
-        if np.linalg.norm(quat) < 1e-9:
-            raise ValueError("外参四元数不能为零")
-        is_identity = np.allclose(translation, 0) and np.allclose(quat / np.linalg.norm(quat), (0, 0, 0, 1))
-        if is_identity:
-            raise ValueError("外参不能为单位阵，请检查相机外参设置")
 
 
 class FollowerBridge:
@@ -83,7 +69,12 @@ class FollowerBridge:
     控制端口状态、执行新鲜度策略并发送命令。``stop`` 可重复调用。
     """
 
-    def __init__(self, robot: KaanhRobotBackend, config: FollowerBridgeConfig, state: BridgeState | None = None, position_filter: TargetPositionFilter | None = None) -> None:
+    def __init__(self, 
+                 robot: KaanhRobotBackend, 
+                 config: FollowerBridgeConfig, 
+                 state: BridgeState | None = None, 
+                 position_filter: TargetPositionFilter | None = None) -> None:
+        
         self._robot, self._config = robot, config
         self._filter = position_filter
         self._lock = threading.Lock()
@@ -99,6 +90,7 @@ class FollowerBridge:
             filtered_point_m=None,
             tcp_target_m=None,
         )
+        self.state = None
 
     @property
     def display_state(self) -> BridgeState:
@@ -132,7 +124,7 @@ class FollowerBridge:
         self._thread = threading.Thread(target=self._run, name="follower-bridge", daemon=True)
         self._thread.start()
 
-    def submit_perception(self, result: TargetPerceptionResult) -> None:
+    def submit_perception(self, result: TransformResult) -> None:
         """提交 perception 结果；此方法不进行网络通信，因此不会阻塞推理。"""
         if result.status == TargetStatus.TARGET_LOST:
             with self._lock:
@@ -142,12 +134,9 @@ class FollowerBridge:
             self._set_debug(None, None, None, "target lost")
             print("[Bridge] 目标丢失，重置滤波器并开始计时")
             return
-        localization = result.localization
-        if localization is None or localization.target_point_camera_m is None:
+        raw = result.target_point_base_m
+        if raw is None:
             return
-        if self._start_pq is None:
-            return
-        raw = self._camera_to_base(localization.target_point_camera_m)
         # 滤波处理
         if self._filter is not None:
             filtered = self._filter.update(raw)
@@ -211,19 +200,19 @@ class FollowerBridge:
 
     def _control_loop(self, now: float) -> None:
         """一个 8 Hz 周期：先读取控制端口状态，再决定发送目标或原地保持。"""
-        state = self._robot.get_robot_state()
-        if state.raw is None or not state.has_tcp_pq:
+        self.state = self._robot.get_robot_state()
+        if self.state.raw is None or not self.state.has_tcp_pq:
             raise RuntimeError("控制端口 get 未返回有效 TCP PQ")
-        if state.has_joints:
+        if self.state.has_joints:
             with self._lock:
-                self._joints_rad = np.deg2rad(state.joints_deg)
+                self._joints_rad = np.deg2rad(self.state.joints_deg)
         with self._lock:
             target, lost_at = self._latest_target_pq, self._target_lost_at
         if lost_at is not None and now - lost_at >= self._config.stop_after_s:
             raise RuntimeError("目标丢失超时")
         if target is None or (lost_at is not None and now - lost_at >= self._config.hold_after_s):
             # Hold 必须以当前 TCP 为绝对目标，转换后发送才能真正原地保持。
-            target = list(state.tcp_pq)
+            target = list(self.state.tcp_pq)
             print(f"[Bridge] 目标丢失，保持原地 TCP PQ: {target}")
             current_debug = self.display_state
             self._set_debug(
@@ -251,14 +240,8 @@ class FollowerBridge:
         with self._lock:
             self._debug = snapshot
 
-    def _camera_to_base(self, point_m: tuple[float, float, float]) -> tuple[float, float, float]:
-        rotation = quaternion_to_rotation(self._config.camera_quaternion_xyzw)
-        converted = rotation @ np.asarray(point_m, dtype=float) + np.asarray(self._config.camera_translation_m, dtype=float)
-        return tuple(float(value) for value in converted)
-
     def _apply_approach_offset(self, point_m: tuple[float, float, float]) -> tuple[float, float, float]:
         assert self._start_pq is not None
         tool_z_in_base = quaternion_to_rotation(tuple(self._start_pq[3:]))[:, 2]
         target = np.asarray(point_m) - self._config.approach_distance_m * tool_z_in_base
         return tuple(float(value) for value in target)
-

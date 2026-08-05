@@ -19,8 +19,8 @@ from typing import Protocol
 
 @dataclass(frozen=True, slots=True)
 class FollowerSceneConfig:
-    camera_translation_m: tuple[float, float, float]
-    camera_quaternion_xyzw: tuple[float, float, float, float]
+    camera_origin_in_base_m: tuple[float, float, float]
+    camera_to_base_quaternion_xyzw: tuple[float, float, float, float]
     camera_axis_length_m: float = 0.12
 
 
@@ -58,7 +58,7 @@ class FollowerIntegrationViewer:
         self._set_marker("raw", state.raw_point_m, "#e74c3c", "raw")
         self._set_marker("filtered", state.filtered_point_m, "#f1c40f", "filtered")
         self._set_marker("tcp target", state.tcp_target_m, "#2ecc71", "tcp target")
-        self._set_marker("camera", self._config.camera_translation_m, "#3498db", "camera")
+        self._set_marker("camera", self._config.camera_origin_in_base_m, "#3498db", "camera")
         self._ax.set_title(f"Follower Integration: {state.status}")
         self._env.step(0.001)
         return self._env.ax.figure.canvas.manager.window is not None
@@ -72,8 +72,8 @@ class FollowerIntegrationViewer:
 
     def _draw_camera(self) -> None:
         """按配置外参在基座系中画出相机坐标轴。"""
-        origin = np.asarray(self._config.camera_translation_m)
-        rotation = quaternion_to_rotation(self._config.camera_quaternion_xyzw)
+        origin = np.asarray(self._config.camera_origin_in_base_m)
+        rotation = quaternion_to_rotation(self._config.camera_to_base_quaternion_xyzw)
         for index, color in enumerate(("r", "g", "b")):
             endpoint = origin + rotation[:, index] * 0.12
             self._camera_artists.extend(self._ax.plot([origin[0], endpoint[0]], [origin[1], endpoint[1]], [origin[2], endpoint[2]], color=color, linewidth=2))
@@ -100,8 +100,8 @@ def main() -> None:
     parser.add_argument("--raw-point-m", type=float, nargs=3, default=(0.2, 0.0, 0.4))
     args = parser.parse_args()
     config = FollowerSceneConfig(
-        camera_translation_m=tuple(args.translation_m),
-        camera_quaternion_xyzw=tuple(args.quaternion),
+        camera_origin_in_base_m=tuple(args.translation_m),
+        camera_to_base_quaternion_xyzw=tuple(args.quaternion),
         camera_axis_length_m=0.12
     )
     viewer = FollowerIntegrationViewer(config)
@@ -121,7 +121,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-
-
-
     main()

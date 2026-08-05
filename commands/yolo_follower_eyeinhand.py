@@ -18,7 +18,7 @@ class YoloFollowerCommand:
         self.robot_setup = RobotSetup(DEFAULT_CONFIG_PATH)
         self.robot_config: RobotConfig = self.robot_setup.get_robot_config()
         self.robot = self.robot_setup.setup_robot()
-        self.camera = self.robot_setup.setup_camera(0)
+        self.camera = self.robot_setup.setup_camera(1)
         self.detector = self.robot_setup.setup_detector()
         self.localization = self.robot_setup.setup_localizer()
         self.tracker = self.robot_setup.setup_tracker()
@@ -51,14 +51,15 @@ class YoloFollowerCommand:
             while True:
                 observation = self.camera.get_latest_observation()
                 if observation is not None and observation.frame_id != last_frame_id:
+                    robot_state = self.bridge.state
+                    rbt_pq = None if robot_state is None else robot_state.tcp_pq
                     last_frame_id = observation.frame_id
                     result = self.session.process(observation)
                     # 同一 observation/result 同时送往控制桥和可视化，保证标记来自同一帧。
-                    # 眼在手外
                     transform_result = self.cam_transform.result2base(
                         result=result,
-                        cam_index=self.camera._device_index,
-                        rbt_pq=None
+                        cam_index=1,
+                        rbt_pq=rbt_pq
                     )
                     self.bridge.submit_perception(transform_result)
                     if result_viewer is not None:

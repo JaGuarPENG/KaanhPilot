@@ -37,6 +37,16 @@ class OrbbecG305Camera(Camera):
     优先使用软件 D2C 对齐，若请求硬件 D2C 且设备支持则使用硬件 D2C。目前只有848X480_30的profile支持硬件D2C。
 
     硬件 D2C 仅在预设的848x480分辨率下可用。
+
+    参数表：
+    - ``profile``：请求的相机 Profile，必须在 G305_SUPPORTED_PROFILES 中。
+    - ``alignment_mode``：请求的 D2C 对齐模式，默认 SOFTWARE。
+    - ``device_index``：选择第几台相机，默认 0。
+    - ``frame_timeout_ms``：等待一帧的最长毫秒数，默认 1000。
+    - ``startup_timeout_s``：启动等待首帧的最长秒数，默认 8.0。
+    - ``depth_processing``：深度处理配置，默认使用官方 SDK 的滤波链。
+    - ``observation_mode``：观测模式，FINAL_ONLY 或 RAW_AND_FILTERED, 其中RAW_AND_FILTERED模式会在每帧观测中同时返回未过滤和过滤后的深度图和点云，用于滤波诊断。
+
     """
 
     def __init__(
@@ -47,7 +57,7 @@ class OrbbecG305Camera(Camera):
         frame_timeout_ms: int = 1_000,
         startup_timeout_s: float = 8.0,
         depth_processing: DepthProcessingConfig = DepthProcessingConfig(),
-        observation_mode: str = "FINAL_ONLY",
+        observation_mode: str = "FINAL_ONLY"
     ) -> None:
         if device_index < 0:
             raise ValueError("设备索引不能为负数")

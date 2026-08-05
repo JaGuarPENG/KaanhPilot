@@ -12,7 +12,6 @@ import numpy as np
 
 from camera.contracts.errors import CameraError
 from commands.setup import RobotSetup
-from commands.yolo_command_support import result_to_dict
 from perception.percept_structs import TargetPerceptionResult
 
 
@@ -52,6 +51,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-display", action="store_true", help="覆盖配置，禁用感知结果显示窗口")
     parser.add_argument("--print-every", type=int, default=10, help="每处理多少帧输出一次 JSON 结果")
     return parser.parse_args()
+
+def result_to_dict(result: TargetPerceptionResult) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "target_id": result.target_id,
+        "frame_id": result.frame_id,
+        "capture_timestamp_ms": result.capture_timestamp_ms,
+        "status": result.status.value,
+        "consecutive_missing_frames": result.consecutive_missing_frames,
+    }
+    if result.detection is not None:
+        payload["detection"] = {"confidence": result.detection.confidence, "bbox_xyxy": result.detection.bbox_xyxy}
+    if result.localization is not None:
+        payload["localization"] = {"target_point_camera_m": result.localization.target_point_camera_m, "valid_point_count": result.localization.valid_point_count}
+    if result.timing is not None:
+        payload["timing_ms"] = {"yolo": result.timing.yolo_ms, "tracking": result.timing.tracking_ms, "localization": result.timing.localization_ms, "process_total": result.timing.process_total_ms}
+    return payload
 
 
 def main() -> None:

@@ -62,6 +62,29 @@ class KaanhRobotBackend:
         return data
     
     def get_robot_state(self) -> RobotState:
+        """获取当前机器人状态，返回 RobotState 实例
+        
+        RoboState结构体包括：
+        - joints_deg: 关节角度，单位为度
+        - actual_joints_deg: 实际关节角度，单位为度
+        - tcp_position: TCP位置，单位为米
+        - tcp_pe: TCP位姿，321欧拉角表示，单位为米和弧度
+        - tcp_pq: TCP位姿，四元数表示，单位为米和弧度，顺序为 [x, y, z, qx, qy, qz, qw]
+        - follower_active: 是否处于follower模式
+        - follower_mode: follower模式名称
+        - moving: 机器人是否在移动
+        - error_code: 错误码
+        - has_error: 是否存在错误
+        - driver_error_codes: 驱动错误码列表
+        - robot_status: 机器人状态描述
+        - robot_motion: 机器人运动状态描述
+        - op_mode: 操作模式
+        - activated: 是否已激活
+        - jog_coordinate: 当前JOG坐标系
+        - timestamp: 状态更新时间戳
+        - raw: 原始状态字典，包含所有未解析的字段
+
+        """
         raw_status = self.get_status()
         self.current_state = parse_robot_state(raw_status)
         return self.current_state

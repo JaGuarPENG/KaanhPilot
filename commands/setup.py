@@ -24,6 +24,7 @@ from yolo.detector import UltralyticsPtDetector, Detector
 from yolo.labels import load_label_mapping
 from planner.follower_bridge import FollowerBridge, FollowerBridgeConfig
 from perception.session import TargetPerceptionSession
+from planner.camera_transform import CameraTransform, RobotCameraExtrinsic
 
 @dataclass(frozen=True, slots=True)
 class RobotConnectionSettings:
@@ -53,6 +54,7 @@ class ViewerSettings:
     show_result_3D: bool
 
 
+
 @dataclass(frozen=True, slots=True)
 class RobotConfig:
     target_id: str | None
@@ -70,6 +72,7 @@ class RobotConfig:
     model_confidence: float
     model_iou: float
     viewer: ViewerSettings
+    cam_extrinsic: RobotCameraExtrinsic
 
 
 class RobotSetup:
@@ -145,6 +148,13 @@ class RobotSetup:
         return AsyncResultViewer(
             show_point_cloud=self._robot_config.viewer.show_result_3D,
         )
+    
+    def setup_camera_transform(self) -> CameraTransform | None:
+        """根据配置创建并返回 CameraTransform 实例。"""
+        return CameraTransform(
+            cam_extrinsic=self._robot_config.cam_extrinsic
+        )
+    
 
     @staticmethod
     def _load_config(config_dir: Path) -> RobotConfig:
@@ -154,7 +164,11 @@ class RobotSetup:
         camera_data = RobotSetup._read_json(config_dir / "camera" / "g305.json")
         model_data = RobotSetup._read_json(config_dir / "model" / "model_config.json")
         perception_data = RobotSetup._read_json(config_dir / "perception" / "perception_config.json")
-        calibration_data = RobotSetup._read_json(config_dir / "calibration" / "eye_to_hand.json")
+        calibration_data = RobotSetup._read_json(config_dir / "calibration" / "eye_to_hand_cam0.json")
+
+        extrinsic_data_1 = RobotSetup._read_json(config_dir / "calibration" / "eye_to_hand_cam0.json")
+        extrinsic_data_2 = RobotSetup._read_json(config_dir / "calibration" / "eye_in_hand_cam1.json")
+        extrinsic_data_3 = RobotSetup._read_json(config_dir / "calibration" / "eye_in_hand_cam2.json")
 
         profiles = {
             "1280@30": G305_1280X800_30,
@@ -167,14 +181,20 @@ class RobotSetup:
         except KeyError as error:
             raise ValueError(f"不支持的 G305 profile: {profile_name!r}") from error
 
-        extrinsic = calibration_data.get("base_to_camera")
+        extrinsic = calibration_data.get("camera_pose_in_base")
         if not isinstance(extrinsic, dict):
-            raise ValueError("eye_to_hand.json 必须包含 base_to_camera 对象")
+            raise ValueError("eye_to_hand_cam0.json 必须包含 camera_pose_in_base 对象")
 
         translation = tuple(float(value) for value in extrinsic["translation_m"])
         quaternion = tuple(float(value) for value in extrinsic["quaternion_xyzw"])
         if len(translation) != 3 or len(quaternion) != 4:
-            raise ValueError("base_to_camera 必须包含 3 个平移值和 4 个四元数值")
+            raise ValueError("camera_pose_in_base 必须包含 3 个原点坐标值和 4 个旋转四元数值")
+        
+        cam_extrinsic = RobotCameraExtrinsic(
+            cam_0_extrinsic=extrinsic_data_1.get("camera_pose_in_base"),
+            cam_1_extrinsic=extrinsic_data_2.get("camera_pose_in_end"),
+            cam_2_extrinsic=extrinsic_data_3.get("camera_pose_in_end"),
+        )
 
         depth_processing = DepthProcessingConfig(
             temporal_enabled=bool(camera_data.get("temporal_enabled", False)),
@@ -197,8 +217,6 @@ class RobotSetup:
             maximum_center_distance_ratio=float(perception_data.get("maximum_center_distance_ratio", 0.20)),
         )
         bridge = FollowerBridgeConfig(
-            camera_translation_m=translation,
-            camera_quaternion_xyzw=quaternion,
             frequency_hz=float(perception_data.get("frequency_hz", 8.0)),
             approach_distance_m=float(perception_data.get("approach_distance_m", 0.1)),
             hold_after_s=float(perception_data.get("hold_after_s", 0.5)),
@@ -232,6 +250,7 @@ class RobotSetup:
                 show_result_2D=bool(perception_data.get("show_result_2D", False)),
                 show_result_3D=bool(perception_data.get("show_result_3D", False)),
             ),
+            cam_extrinsic=cam_extrinsic
         )
 
     @staticmethod
@@ -245,6 +264,5 @@ class RobotSetup:
         if not isinstance(data, dict):
             raise ValueError(f"JSON 配置根节点必须是对象: {path}")
         return data
-
 
 

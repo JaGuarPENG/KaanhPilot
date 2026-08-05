@@ -34,6 +34,20 @@ class TargetPositionFilterTests(unittest.TestCase):
 
 
 class BridgeStateTests(unittest.TestCase):
+    def test_camera_point_is_transformed_into_base_coordinates(self) -> None:
+        bridge = FollowerBridge(
+            object(),
+            FollowerBridgeConfig(
+                camera_origin_in_base_m=(1.0, 2.0, 3.0),
+                camera_to_base_quaternion_xyzw=(0.0, 0.0, 0.7071067811865476, 0.7071067811865476),
+            ),
+        )
+
+        self.assertTupleEqual(
+            tuple(round(value, 9) for value in bridge._camera_to_base((1.0, 0.0, 0.0))),
+            (1.0, 3.0, 3.0),
+        )
+
     def test_default_debug_state_is_a_stopped_snapshot(self) -> None:
         bridge = FollowerBridge(object(), FollowerBridgeConfig((0.0, 0.0, 0.5), (-0.5, 0.5, -0.5, 0.5)))
 
