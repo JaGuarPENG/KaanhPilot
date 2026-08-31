@@ -19,7 +19,7 @@ shared_data = {
 data_lock = threading.Lock() 
 cmd_queue = queue.Queue()
 
-ROBOT_IP = "192.168.1.10"
+ROBOT_IP = "192.168.110.77"  # 请根据实际情况修改为机器人的IP地址
 PORT_MONITOR = 5888  # 监听端口
 UDP_PORT = 9998  # UDP端口
 PORT_CONTROL = 5999  # 控制端口
@@ -86,9 +86,9 @@ def control_thread_func():
         time.sleep(0.5)
         robot.manual_enable()
         print("[控制线程] 准备就绪，等待按键指令...")
-        robot.set_pgm_vel(100)  # 设置程序速度为 100%
-        robot.set_jog_vel(100)  # 设置JOG速度为 100%
-        print("[控制线程] 速度设置为 100%")
+        robot.set_pgm_vel(20)  # 设置程序速度为 50%
+        robot.set_jog_vel(30)  # 设置JOG速度为 50%
+        print("[控制线程] 速度设置为 50%")
         robot.set_jog_coordinate()  # 设置JOG坐标系为工具
         print("[控制线程] JOG坐标系设置为工具")
         executor = RobotCommandExecutor(robot)

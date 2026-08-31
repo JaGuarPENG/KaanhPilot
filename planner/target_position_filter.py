@@ -32,13 +32,16 @@ class TargetPositionFilter:
     位置变化。首个样本直接初始化滤波状态，调用 ``reset`` 后同样如此。
     """
 
-    def __init__(self, alpha: float = 0.35, jump_threshold_m: float = 0.05) -> None:
+    def __init__(self, alpha: float = 0.35, jump_threshold_m: float = 0.1, dead_zone_m: float = 0.003) -> None:
         if not 0.0 < alpha <= 1.0:
             raise ValueError("alpha 必须位于 (0, 1] 区间")
         if jump_threshold_m <= 0.0:
             raise ValueError("jump_threshold_m 必须为正数")
+        if dead_zone_m <= 0.0:
+            raise ValueError("dead_zone_m 必须为正数")
         self.alpha = alpha
         self.jump_threshold_m = jump_threshold_m
+        self.dead_zone_m = dead_zone_m
         self._position_m: np.ndarray | None = None
 
     @property
@@ -60,5 +63,9 @@ class TargetPositionFilter:
             return FilterUpdate(tuple(float(v) for v in sample), True)
         if float(np.linalg.norm(sample - self._position_m)) > self.jump_threshold_m:
             return FilterUpdate(tuple(float(v) for v in self._position_m), False)
+        
+        if float(np.linalg.norm(sample - self._position_m)) < self.dead_zone_m:
+            return FilterUpdate(tuple(float(v) for v in self._position_m), True)
+        
         self._position_m = self.alpha * sample + (1.0 - self.alpha) * self._position_m
         return FilterUpdate(tuple(float(v) for v in self._position_m), True)

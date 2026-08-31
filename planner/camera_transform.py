@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 
 from camera.contracts.cam_structs import AlignedRGBDObservation
 from perception.percept_structs import TargetPerceptionResult, TargetStatus
-from planner.pose import quaternion_to_rotation
+from planner.pose import quaternion_to_rotation, quaternion_multiply
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +35,7 @@ class TransformResult:
     frame_id: int
     capture_timestamp_ms: int
     status: TargetStatus
-    target_point_base_m: tuple[float, float, float] | None
+    target_point_base_m: list[float, float, float] | None
 
     def __post_init__(self) -> None:
         if not self.target_id:
@@ -62,8 +62,21 @@ class TransformResult:
         object.__setattr__(
             self,
             "target_point_base_m",
-            tuple(float(value) for value in point),
+            list(float(value) for value in point),
         )
+
+@dataclass(frozen=True, slots=True)
+class CameraPoseInBase:
+    """相机在机器人基座坐标系下的位姿
+    
+    参数表：
+    - position_m: 位置坐标，单位为米
+    - quaternion_xyzw: 四元数，表示旋转
+    """
+    position_m: list[float, float, float]
+    quaternion_xyzw: list[float, float, float, float]
+
+
 
 class CameraTransform:
     def __init__(self, cam_extrinsic: RobotCameraExtrinsic):
@@ -185,3 +198,46 @@ class CameraTransform:
             status=result.status,
             target_point_base_m=target_point_base_m,
         )
+    
+    def camera2base(self, cam_index: int, rbt_pq: list[float]|None) -> CameraPoseInBase:
+        """将相机位置对齐到机器人坐标系"""
+        # 这里可以实现对齐逻辑，例如使用相机内参和外参进行坐标变换
+        # 校验
+        if cam_index not in [0, 1, 2]:
+            raise ValueError("无效的相机索引，必须为 0、1 或 2")
+        if cam_index == 0:
+            #眼在手外
+            extrinsic = self.get_camera_extrinsic(0)
+            translation = extrinsic["translation_m"]
+            rotation_pq = extrinsic["quaternion_xyzw"]
+            camera_position_base_m = tuple(float(value) for value in translation)
+            camera_quaternion_base = rotation_pq
+        else:
+            #眼在手上
+            if rbt_pq is None or len(rbt_pq) != 7:
+                raise ValueError("机器人位姿 rbt_pq 必须为长度为 7 的列表，包含位置和四元数")
+            extrinsic = self.get_camera_extrinsic(cam_index)
+            tcp_position_m = np.asarray(rbt_pq[:3], dtype=float) / 1000.0
+            tcp_quaternion = rbt_pq[3:7]
+            tcp_rm = quaternion_to_rotation(tcp_quaternion)
+            cam_translation = extrinsic["translation_m"]
+            cam_rotation_pq = extrinsic["quaternion_xyzw"]
+            camera_position_base_m = tcp_position_m + tcp_rm @ np.asarray(cam_translation, dtype=float)
+            camera_quaternion_base = quaternion_multiply(tcp_quaternion, cam_rotation_pq)
+
+        # 外置相机外参来自 JSON list，眼在手位置计算得到 ndarray。统一在
+        # camera2base 的出口转换为 tuple，调用方无需按相机类型判断 Python 类型。
+        position = np.asarray(camera_position_base_m, dtype=float)
+        quaternion = np.asarray(camera_quaternion_base, dtype=float)
+        if position.shape != (3,) or not np.isfinite(position).all():
+            raise ValueError("相机基座位置必须是有限的 3D 米单位坐标")
+        if quaternion.shape != (4,) or not np.isfinite(quaternion).all():
+            raise ValueError("相机基座旋转必须是有限的 xyzw 四元数")
+        quaternion_norm = float(np.linalg.norm(quaternion))
+        if quaternion_norm < 1e-9:
+            raise ValueError("相机基座旋转四元数不能为零")
+        return CameraPoseInBase(
+            position_m=list(float(value) for value in position),
+            quaternion_xyzw=list(float(value / quaternion_norm) for value in quaternion),
+        )
+        

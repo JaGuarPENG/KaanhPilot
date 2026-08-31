@@ -8,7 +8,7 @@ class RobotCommandExecutor:
         self.robot = robot
 
     def move_init_pose(self):
-        self.robot.movej([0, 0, 150, -150, -90, 0], [100, 200, 100])
+        self.robot.movej([-110.298, -18.377, 137.141, -117.423, -65.137, 0], [100, 200, 100])
 
     def move_to_offset_destination(self, offset_pq=[15,0,0,0.0, 0.13052619222005157, 0.0, 0.9914448613738104]):
         """给定相对偏移 PQ 测试 follower 到达目标点。
@@ -47,7 +47,7 @@ class RobotCommandExecutor:
                 self.robot.stop_follower()
                 break
 
-    def move_to_world_destination(self, world_target_pq=[422.6999999999964, 121.89999999999692, 219.81488474825716, 0.9848077530122085, -1.9882226384013025e-15, 0.17364817766692858, 2.216514249238528e-15]):
+    def move_to_world_destination(self, world_target_pq=[-37.35274427775678,-471.4757335161937,529.60253908919,0.522637546825067,-0.4873053503733354,0.5163219398780524,0.47201180551630445]):
         """给定绝对目标 PQ 测试 follower 到达目标点。
         world_target_pq: 基坐标系下的绝对目标 PQ，前3个元素为位置，后4个元素为旋转四元数。
         """

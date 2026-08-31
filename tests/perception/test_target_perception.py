@@ -13,11 +13,18 @@ from camera.adapters.orbbec.profiles import G305_848X480_60
 from camera.contracts.cam_structs import AlignedRGBDObservation, AlignmentMode, CameraDistortion, CameraIntrinsics, RigidTransform, SensorCalibration
 from perception.percept_structs import LocalizationConfig, TargetStatus
 from perception.roi_localizer import RoiPointCloudLocalizer
-from perception.saved_observation import load_saved_observation
 from perception.session import TargetPerceptionSession
 from perception.target_tracker import SingleTargetTracker, TrackerConfig
 from yolo.contracts.yolo_structs import Detection, FrameDetectionResult
 from yolo.labels import LabelMapping
+
+try:
+    from perception.saved_observation import load_saved_observation
+except ModuleNotFoundError as error:
+    if error.name == "cv2":
+        load_saved_observation = None
+    else:
+        raise
 
 
 def make_observation(frame_id: int = 1) -> AlignedRGBDObservation:
@@ -72,6 +79,7 @@ class RoiLocalizerTests(unittest.TestCase):
         self.assertEqual(len(result.inspection.points_m), 34)
 
 
+@unittest.skipUnless(load_saved_observation is not None, "requires opencv-python")
 class SavedObservationTests(unittest.TestCase):
     def test_png_is_used_as_yolo_input_and_same_name_npz_supplies_cloud(self) -> None:
         observation = make_observation(7)

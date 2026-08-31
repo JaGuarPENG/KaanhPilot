@@ -4,6 +4,13 @@ import unittest
 
 import numpy as np
 
+try:
+    import cv2  # noqa: F401
+except ModuleNotFoundError as error:
+    if error.name == "cv2":
+        raise unittest.SkipTest("requires opencv-python") from error
+    raise
+
 from camera.adapters.orbbec.g305 import OrbbecG305Camera
 from camera.adapters.orbbec.profiles import G305_848X480_60
 from camera.contracts.cam_structs import CameraIntrinsics

@@ -10,7 +10,7 @@ import time
 from commands.setup import RobotSetup
 from perception.percept_structs import TargetPerceptionResult
 from perception.saved_observation import load_saved_observation
-from visualization.perception_viewer import PerceptionPointCloudViewer
+from visualization.viewer_3d import PerceptionPointCloudViewer
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]

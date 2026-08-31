@@ -17,14 +17,15 @@ from perception.target_tracker import  TrackerConfig
 from perception.target_tracker import SingleTargetTracker
 from perception.roi_localizer import RoiPointCloudLocalizer
 from planner.follower_bridge import  FollowerBridgeConfig
-from visualization.follower_integration_viewer import FollowerSceneConfig, FollowerIntegrationViewer
-from visualization.perception_result_viewer import AsyncResultViewer
+# from visualization.viewer_robot import FollowerSceneConfig, FollowerIntegrationViewer
+# from visualization.perception_result_viewer import AsyncResultViewer
 from robot.kaanh_backend import KaanhRobotBackend
 from yolo.detector import UltralyticsPtDetector, Detector
 from yolo.labels import load_label_mapping
 from planner.follower_bridge import FollowerBridge, FollowerBridgeConfig
 from perception.session import TargetPerceptionSession
 from planner.camera_transform import CameraTransform, RobotCameraExtrinsic
+from planner.target_position_filter import TargetPositionFilter
 
 @dataclass(frozen=True, slots=True)
 class RobotConnectionSettings:
@@ -66,7 +67,7 @@ class RobotConfig:
     localization: LocalizationConfig
     tracker: TrackerConfig
     bridge: FollowerBridgeConfig
-    scene: FollowerSceneConfig
+    # scene: FollowerSceneConfig
     model_path: Path
     labels_path: Path
     model_confidence: float
@@ -85,11 +86,11 @@ class RobotSetup:
         """获取机器人配置。"""
         return self._robot_config
     
-    def setup_robot(self) -> KaanhRobotBackend:
+    def setup_robot(self, port: int|None) -> KaanhRobotBackend:
         """根据配置创建并返回 KaanhRobotBackend 实例。"""
         return KaanhRobotBackend(
             str(self._robot_config.robot.ip),
-            int(self._robot_config.robot.control_port),
+            int(self._robot_config.robot.control_port) if port is None else port,
             int(self._robot_config.robot.udp_port),
             timeout=float(self._robot_config.robot.timeout_s)
         )
@@ -132,22 +133,22 @@ class RobotSetup:
         tracker = SingleTargetTracker(self._robot_config.tracker)
         return TargetPerceptionSession(detector, localizer, tracker, target_id)
 
-    def setup_bridge(self, robot: KaanhRobotBackend) -> FollowerBridge:
-        return FollowerBridge(robot, self._robot_config.bridge)
+    def setup_bridge(self, robot: KaanhRobotBackend, position_filter: TargetPositionFilter | None) -> FollowerBridge:
+        return FollowerBridge(robot, self._robot_config.bridge, position_filter=position_filter)
+
+    # def start_robot_scene(self) -> FollowerIntegrationViewer | None:
+    #     if not self._robot_config.viewer.show_robot:
+    #         print("[Setup] 配置文件中未启用机器人可视化窗口")
+    #         return None
+    #     return FollowerIntegrationViewer(self._robot_config.scene)
     
-    def start_robot_scene(self) -> FollowerIntegrationViewer | None:
-        if not self._robot_config.viewer.show_robot:
-            print("[Setup] 配置文件中未启用机器人可视化窗口")
-            return None
-        return FollowerIntegrationViewer(self._robot_config.scene)
-    
-    def start_result_viewer(self) -> AsyncResultViewer | None:
-        if not self._robot_config.viewer.show_result_2D:
-            print("[Setup] 配置文件中未启用视觉2D可视化窗口")
-            return None
-        return AsyncResultViewer(
-            show_point_cloud=self._robot_config.viewer.show_result_3D,
-        )
+    # def start_result_viewer(self) -> AsyncResultViewer | None:
+    #     if not self._robot_config.viewer.show_result_2D:
+    #         print("[Setup] 配置文件中未启用视觉2D可视化窗口")
+    #         return None
+    #     return AsyncResultViewer(
+    #         show_point_cloud=self._robot_config.viewer.show_result_3D,
+    #     )
     
     def setup_camera_transform(self) -> CameraTransform | None:
         """根据配置创建并返回 CameraTransform 实例。"""
@@ -217,7 +218,7 @@ class RobotSetup:
             maximum_center_distance_ratio=float(perception_data.get("maximum_center_distance_ratio", 0.20)),
         )
         bridge = FollowerBridgeConfig(
-            frequency_hz=float(perception_data.get("frequency_hz", 8.0)),
+            frequency_hz=float(perception_data.get("frequency_hz", 100.0)),
             approach_distance_m=float(perception_data.get("approach_distance_m", 0.1)),
             hold_after_s=float(perception_data.get("hold_after_s", 0.5)),
             stop_after_s=float(perception_data.get("stop_after_s", 2.0)),
@@ -240,7 +241,7 @@ class RobotSetup:
             localization=localization,
             tracker=tracker,
             bridge=bridge,
-            scene=FollowerSceneConfig(translation, quaternion),
+            # scene=FollowerSceneConfig(translation, quaternion),
             model_path=config_dir/ Path(model_data.get("model_path", "model/yolov8_0728.pt")),
             labels_path=config_dir/ Path(model_data.get("labels_path", "model/yolov8_0728.labels.yaml")),
             model_confidence=float(model_data.get("confidence", 0.45)),

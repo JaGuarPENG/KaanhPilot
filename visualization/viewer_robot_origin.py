@@ -1,4 +1,4 @@
-"""外置相机 follower 集成调试视图。
+﻿"""外置相机 follower 集成调试视图。
 
 可独立运行：``python -m visualization.follower_integration_viewer``。
 独立模式使用零位机器人和示例点，只用于检查外参、相机朝向和标记位置；正式

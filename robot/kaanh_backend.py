@@ -31,6 +31,8 @@ class KaanhRobotBackend:
         self.follower_start_pq = None
         self.follower_target_pq = None
         self.current_state = RobotState()  # 保存当前机器人状态
+        self.error_code = None  # 保存当前错误码
+        self.robot_status = None  # 保存当前机器人状态描述
         
 
     def connect(self):
@@ -46,7 +48,7 @@ class KaanhRobotBackend:
             return False
     
     def get_status(self):
-        resp = self._send_raw_command("get")
+        resp = self._send_raw_command("get", need_reply=True, need_check=False)
         # print(f"[状态] 原始响应: {resp}")
         data = self._parse_json(resp)
         for _ in range(3):
@@ -87,6 +89,8 @@ class KaanhRobotBackend:
         """
         raw_status = self.get_status()
         self.current_state = parse_robot_state(raw_status)
+        self.error_code = self.current_state.error_code
+        self.robot_status = self.current_state.robot_status
         return self.current_state
 
     def close(self):
@@ -95,12 +99,23 @@ class KaanhRobotBackend:
         self.is_connected = False  
         self.follower_state = False  # 重置follower状态
 
-    def login(self, user="Engineer", pwd=""):
+    def login(self, user="Engineer", pwd="000000"):
         pwd_md5 = hashlib.md5(pwd.encode('utf-8')).hexdigest()
-        self._send_raw_command(f"login --user={user} --pwd={pwd_md5}")
+        self._send_raw_command(f"login --user={user} --pwd={pwd_md5}", need_reply=True, need_check=False)
+
 
     def manual_enable(self):
         self._send_raw_command("manual_en")
+        
+    def manual_disable(self):
+        self._send_raw_command("manual_ds")
+
+    def auto_enable(self):
+        self._send_raw_command("en")
+
+    def auto_disable(self):
+        self._send_raw_command("ds")
+
 
     def movej(self, joints, vels):
         """发送关节运动指令"""
@@ -145,6 +160,10 @@ class KaanhRobotBackend:
         """设置工具坐标系id"""
         self._send_raw_command(f"set_tool --index=[{tool_id}]")
 
+    def set_op_mode(self, op_mode="manual"):
+        """设置操作模式"""
+        self._send_raw_command(f"set_op_mode --{op_mode}")
+
     # follower_cart指令会在结束时返回一个空的ACK，表示动作已完成。为了避免后续指令被这个空ACK干扰，需要在发送follower_cart指令后清空所有空ACK。
     def start_follower(self):
         """启动follower_cart模式"""
@@ -164,7 +183,7 @@ class KaanhRobotBackend:
 
             self.follower_start_pq = state.tcp_pq
             self.follower_target_pq = None
-            self._send_raw_command("follower_cart", need_reply=False)
+            self._send_raw_command("follower_cart", need_reply=False, need_check=True)
             self.follower_state = True
             return True
 
@@ -191,7 +210,7 @@ class KaanhRobotBackend:
    
     def stop_follower(self):
         """停止follower模式"""
-        self._send_raw_command("stop_follower", need_reply=True)
+        self._send_raw_command("stop_follower", need_reply=True, need_check=False)
         self._drain_empty_acks()
         self.follower_udp.close()
         self.follower_state = False
@@ -199,9 +218,15 @@ class KaanhRobotBackend:
     def _pack_header(self, msg_len):
         return struct.pack('<IIQqqq', msg_len, 0x01, 0x1000, 0xA1B2C3D4, 0, 0)
 
-    def _send_raw_command(self, cmd_str, need_reply=True):
+    def _send_raw_command(self, cmd_str, need_reply=True, need_check=True):
         """发送原始指令，返回原始响应 (字节)"""
-        if not self.is_connected: return None
+        if not self.is_connected: 
+            raise RuntimeError("WebSocket未连接，无法发送指令")
+        if need_check:
+            self.get_robot_state()  # 每次发送指令前获取最新状态，更新 error_code 和 robot_status
+            if self.error_code not in (None, 0):
+                raise RuntimeError(f"机器人存在错误，错误码={self.error_code}，状态={self.robot_status}")
+            self._drain_empty_acks()  # 清空可能存在的空ACK，避免干扰后续指令
         try:
             payload = cmd_str.encode('utf-8')
             full_packet = self._pack_header(len(payload)) + payload

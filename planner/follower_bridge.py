@@ -43,14 +43,14 @@ class FollowerBridgeConfig:
 
     参数表：
     - frequency_hz: 向控制器下发 follower 的频率，单位为 Hz
-    - approach_distance_m: follower 目标点沿工具负 Z 轴的接近距离，单位为米
+    - approach_distance_m: follower 目标点沿相机的偏置，单位为米
     - hold_after_s: 目标丢失后保持原地等待的时间，单位为秒
     - stop_after_s: 目标丢失后停止 follower 的时间，单位为秒
 
 
     """
 
-    frequency_hz: float = 8.0
+    frequency_hz: float = 100.0
     approach_distance_m: float = 0.1
     hold_after_s: float = 0.5
     stop_after_s: float = 2.0
@@ -199,8 +199,10 @@ class FollowerBridge:
             self._stop_event.wait(max(0.0, period - (time.monotonic() - start_time)))
 
     def _control_loop(self, now: float) -> None:
-        """一个 8 Hz 周期：先读取控制端口状态，再决定发送目标或原地保持。"""
+        """一个 100 Hz 周期：先读取控制端口状态，再决定发送目标或原地保持。"""
         self.state = self._robot.get_robot_state()
+        if self.state.error_code not in (None, 0) or self.state.robot_status not in (None, "Normal"):
+            raise RuntimeError(f"控制器状态异常：{self.state.error_code} {self.state.robot_status}")
         if self.state.raw is None or not self.state.has_tcp_pq:
             raise RuntimeError("控制端口 get 未返回有效 TCP PQ")
         if self.state.has_joints:
@@ -243,5 +245,7 @@ class FollowerBridge:
     def _apply_approach_offset(self, point_m: tuple[float, float, float]) -> tuple[float, float, float]:
         assert self._start_pq is not None
         tool_z_in_base = quaternion_to_rotation(tuple(self._start_pq[3:]))[:, 2]
-        target = np.asarray(point_m) - self._config.approach_distance_m * tool_z_in_base
+        tool_x_in_base = quaternion_to_rotation(tuple(self._start_pq[3:]))[:, 0]
+        # 将 follower 目标点沿工具负 Z 轴偏置，避免 follower
+        target = np.asarray(point_m) - self._config.approach_distance_m * tool_z_in_base - 0.08498144615210436 * tool_x_in_base
         return tuple(float(value) for value in target)

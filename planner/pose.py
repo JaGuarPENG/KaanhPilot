@@ -44,9 +44,9 @@ def calculate_pq_delta(
 
     current_q_inverse = _quaternion_conjugate(current_q)
     if rotation_frame == "local":
-        delta_q = _quaternion_multiply(current_q_inverse, target_q)
+        delta_q = quaternion_multiply(current_q_inverse, target_q)
     else:
-        delta_q = _quaternion_multiply(target_q, current_q_inverse)
+        delta_q = quaternion_multiply(target_q, current_q_inverse)
     # 先计算基座标系下的位置差
     delta_position_world = [
         target_pq[i] - current_pq[i]
@@ -116,11 +116,11 @@ def apply_tool_delta_to_pq(
             delta_position_mm,
             start_q,
         )
-        target_q = _quaternion_multiply(start_q, delta_q)
+        target_q = quaternion_multiply(start_q, delta_q)
     else:
         # world 模式下，位置增量已经在基坐标系中。
         delta_position_base_mm = delta_position_mm
-        target_q = _quaternion_multiply(delta_q, start_q)
+        target_q = quaternion_multiply(delta_q, start_q)
 
     target_position = [
         start_position[index] + delta_position_base_mm[index]
@@ -147,14 +147,14 @@ def _rotate_vector_by_quaternion(
     """使用四元数将工具坐标系向量旋转到基坐标系。"""
     _validate_length(vector, 3, "vector")
     vector_q = (float(vector[0]), float(vector[1]), float(vector[2]), 0.0)
-    rotated_q = _quaternion_multiply(
-        _quaternion_multiply(quaternion, vector_q),
+    rotated_q = quaternion_multiply(
+        quaternion_multiply(quaternion, vector_q),
         _quaternion_conjugate(quaternion),
     )
     return list(rotated_q[:3])
 
 
-def _quaternion_multiply(first: Quaternion, second: Quaternion) -> Quaternion:
+def quaternion_multiply(first: Quaternion, second: Quaternion) -> Quaternion:
     """计算两个 [qx, qy, qz, qw] 四元数的乘积。"""
     x1, y1, z1, w1 = first
     x2, y2, z2, w2 = second

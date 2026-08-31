@@ -5,24 +5,31 @@ from __future__ import annotations
 import numpy as np
 
 from perception.percept_structs import TargetPerceptionResult
-from visualization.coordinates import camera_optical_to_open3d_display
 
+def camera_optical_to_open3d_display(camera_points_m: np.ndarray) -> np.ndarray:
+    """把 camera_optical_frame 转为更便于 Open3D 观察的坐标。
 
-class PerceptionPointCloudViewer:
+    项目中的真实传感器坐标保持 X 向右、Y 向下、Z 向前。Open3D 窗口中将
+    Y、Z 反向，使画面符合常见的 Y 向上观察习惯。此函数只返回显示副本，
+    调用方不得将其结果写回定位结果、标定数据或机器人控制输入。
+    """
+    return np.asarray(camera_points_m, dtype=np.float64) * np.array([1.0, -1.0, -1.0], dtype=np.float64)
+
+class Viewer3D:
     """显示最终 ROI 内点和抓取点，不打开相机也不影响感知计算。
 
     调用者必须在同一线程创建、更新和销毁此对象。实时命令把它放在显示
     线程，后端只提交最新结果，因而 Open3D 刷新不会阻塞 YOLO 或点云定位。
     """
 
-    def __init__(self, title: str = "YOLO ROI Filtered Point Cloud") -> None:
+    def __init__(self) -> None:
         try:
             import open3d as o3d
         except ImportError as error:
-            raise RuntimeError("显示 ROI 过滤点云需要安装 open3d") from error
+            raise RuntimeError("显示点云需要安装 open3d") from error
         self._o3d = o3d
         self._window = o3d.visualization.Visualizer()
-        self._window.create_window(title, width=960, height=720)
+        self._window.create_window("3D Viewer", width=960, height=720)
         self._cloud = o3d.geometry.PointCloud()
         self._target_marker = o3d.geometry.TriangleMesh.create_sphere(radius=0.018)
         self._target_marker.paint_uniform_color((1.0, 0.0, 0.0))
@@ -74,3 +81,5 @@ class PerceptionPointCloudViewer:
         if self._opened:
             self._window.destroy_window()
             self._opened = False
+
+
