@@ -247,5 +247,6 @@ class FollowerBridge:
         tool_z_in_base = quaternion_to_rotation(tuple(self._start_pq[3:]))[:, 2]
         tool_x_in_base = quaternion_to_rotation(tuple(self._start_pq[3:]))[:, 0]
         # 将 follower 目标点沿工具负 Z 轴偏置，避免 follower
+        # TODO:这里要完善，只考虑了测试情况的偏置
         target = np.asarray(point_m) - self._config.approach_distance_m * tool_z_in_base - 0.08498144615210436 * tool_x_in_base
         return tuple(float(value) for value in target)

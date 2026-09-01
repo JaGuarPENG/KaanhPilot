@@ -142,6 +142,66 @@ class KaanhRobotBackend:
             print(f"[MoveJ] 执行出错: {e}")
             return None
         
+    def movel(self, rbt_pq, vels=None, all_ee=False, ee_ids=None):
+        """Send a linear motion command in the controller's ``manual_mvl`` format.
+
+        ``rbt_pq`` accepts one ``[x, y, z, a, b, c]`` pose or a sequence of
+        such poses for a multi-end-effector robot.  Position values are in mm
+        and orientation values are in degrees, as required by ``EE_XYZABC``.
+        """
+        try:
+            if all_ee and ee_ids is not None:
+                raise ValueError("all_ee and ee_ids cannot be used together")
+
+            is_single_pose = (
+                isinstance(rbt_pq, Sequence)
+                and len(rbt_pq) == 6
+                and not isinstance(rbt_pq[0], Sequence)
+            )
+            poses = [rbt_pq] if is_single_pose else rbt_pq
+            if not isinstance(poses, Sequence) or not poses:
+                raise ValueError("rbt_pq must contain at least one pose")
+
+            ee_targets = []
+            for pose in poses:
+                if not isinstance(pose, Sequence) or len(pose) != 6:
+                    raise ValueError("every pose must contain exactly 6 values")
+                pose_values = ",".join(
+                    f"DOUBLE{{{float(value):.6f}}}" for value in pose
+                )
+                ee_targets.append(
+                    f"EE_XYZABC{{{pose_values},INT32{{0}},INT32{{0}},BOOL{{false}}}}"
+                )
+
+            cmd = f"manual_mvl --pe=RobotTarget{{{','.join(ee_targets)}}}"
+            if vels is not None:
+                values = (
+                    vels
+                    if isinstance(vels, Sequence) and not isinstance(vels, (str, bytes))
+                    else [vels]
+                )
+                speed_values = ",".join(
+                    f"DOUBLE{{{float(value):.6f}}}" for value in values
+                )
+                cmd += f" --vel=Speed{{{speed_values}}}"
+            if all_ee:
+                cmd += " --all_ee"
+            if ee_ids is not None:
+                ids = (
+                    ee_ids
+                    if isinstance(ee_ids, Sequence) and not isinstance(ee_ids, (str, bytes))
+                    else [ee_ids]
+                )
+                cmd += f" --ee_ids={{{','.join(str(int(ee_id)) for ee_id in ids)}}}"
+
+            return self._send_raw_command(cmd)
+        except (TypeError, ValueError, IndexError) as e:
+            print(f"[MoveL] Invalid parameter: {e}")
+            return None
+        except Exception as e:
+            print(f"[MoveL] Execution failed: {e}")
+            return None
+
     def set_jog_vel(self, percent):
         """设置JOG速度百分比 (0-100)"""
         percent = max(0, min(100, percent))
@@ -163,6 +223,10 @@ class KaanhRobotBackend:
     def set_op_mode(self, op_mode="manual"):
         """设置操作模式"""
         self._send_raw_command(f"set_op_mode --{op_mode}")
+
+    def set_confdata_state(self, data="false"):
+        """设置配置数据状态, 初始化时需要关闭否则会校验象限"""
+        self._send_raw_command(f"set_confdata_state --data={data}")
 
     # follower_cart指令会在结束时返回一个空的ACK，表示动作已完成。为了避免后续指令被这个空ACK干扰，需要在发送follower_cart指令后清空所有空ACK。
     def start_follower(self):

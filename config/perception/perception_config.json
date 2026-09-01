@@ -9,7 +9,7 @@
   "minimum_track_iou": 0.3,
   "maximum_center_distance_ratio": 0.2,
   "maximum_missing_frames": 5,
-  "show_vision_robot": true,
-  "show_result_2D": true,
-  "show_result_3D": true
+  "show_robot": true,
+  "show_2d": true,
+  "show_3d": true
 }

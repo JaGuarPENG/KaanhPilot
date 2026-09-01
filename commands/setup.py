@@ -17,8 +17,9 @@ from perception.target_tracker import  TrackerConfig
 from perception.target_tracker import SingleTargetTracker
 from perception.roi_localizer import RoiPointCloudLocalizer
 from planner.follower_bridge import  FollowerBridgeConfig
-# from visualization.viewer_robot import FollowerSceneConfig, FollowerIntegrationViewer
-# from visualization.perception_result_viewer import AsyncResultViewer
+from visualization.viewer_2d import Viewer2D
+from visualization.viewer_3d import Viewer3D
+from visualization.viewer_robot_origin import ViewerRobot
 from robot.kaanh_backend import KaanhRobotBackend
 from yolo.detector import UltralyticsPtDetector, Detector
 from yolo.labels import load_label_mapping
@@ -67,7 +68,6 @@ class RobotConfig:
     localization: LocalizationConfig
     tracker: TrackerConfig
     bridge: FollowerBridgeConfig
-    # scene: FollowerSceneConfig
     model_path: Path
     labels_path: Path
     model_confidence: float
@@ -136,19 +136,24 @@ class RobotSetup:
     def setup_bridge(self, robot: KaanhRobotBackend, position_filter: TargetPositionFilter | None) -> FollowerBridge:
         return FollowerBridge(robot, self._robot_config.bridge, position_filter=position_filter)
 
-    # def start_robot_scene(self) -> FollowerIntegrationViewer | None:
-    #     if not self._robot_config.viewer.show_robot:
-    #         print("[Setup] 配置文件中未启用机器人可视化窗口")
-    #         return None
-    #     return FollowerIntegrationViewer(self._robot_config.scene)
+    def start_2d_viewer(self) -> Viewer2D | None:
+        if not self._robot_config.viewer.show_result_2D:
+            print("[Setup] 配置文件中未启用视觉2D可视化窗口")
+            return None
+        return Viewer2D()
     
-    # def start_result_viewer(self) -> AsyncResultViewer | None:
-    #     if not self._robot_config.viewer.show_result_2D:
-    #         print("[Setup] 配置文件中未启用视觉2D可视化窗口")
-    #         return None
-    #     return AsyncResultViewer(
-    #         show_point_cloud=self._robot_config.viewer.show_result_3D,
-    #     )
+    def start_3d_viewer(self) -> Viewer3D | None:
+        if not self._robot_config.viewer.show_result_3D:
+            print("[Setup] 配置文件中未启用视觉3D可视化窗口")
+            return None
+        return Viewer3D()
+    
+    def start_robot_viewer(self) -> ViewerRobot | None:
+        if not self._robot_config.viewer.show_robot:
+            print("[Setup] 配置文件中未启用机器人可视化窗口")
+            return None
+        return ViewerRobot()
+    
     
     def setup_camera_transform(self) -> CameraTransform | None:
         """根据配置创建并返回 CameraTransform 实例。"""
@@ -241,15 +246,14 @@ class RobotSetup:
             localization=localization,
             tracker=tracker,
             bridge=bridge,
-            # scene=FollowerSceneConfig(translation, quaternion),
             model_path=config_dir/ Path(model_data.get("model_path", "model/yolov8_0728.pt")),
             labels_path=config_dir/ Path(model_data.get("labels_path", "model/yolov8_0728.labels.yaml")),
             model_confidence=float(model_data.get("confidence", 0.45)),
             model_iou=float(model_data.get("iou", 0.7)),
             viewer=ViewerSettings(
-                show_robot=bool(perception_data.get("show_vision_robot", False)),
-                show_result_2D=bool(perception_data.get("show_result_2D", False)),
-                show_result_3D=bool(perception_data.get("show_result_3D", False)),
+                show_robot=bool(perception_data.get("show_robot", False)),
+                show_result_2D=bool(perception_data.get("show_2d", False)),
+                show_result_3D=bool(perception_data.get("show_3d", False)),
             ),
             cam_extrinsic=cam_extrinsic
         )
