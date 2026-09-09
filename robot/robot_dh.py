@@ -1,5 +1,119 @@
 import roboticstoolbox as rtb
 import numpy as np
+from spatialmath import SE3
+
+
+def create_humaniod_robot():
+    """Create the 20-axis humanoid kinematic tree described in the joint table.
+
+    The supplied joint axes are expressed in the ``base`` frame at the
+    mechanical zero pose.  This model therefore uses the following explicit
+    convention: every link frame is parallel to ``base`` at zero pose, and
+    each ``xyz_mm`` value is the fixed offset from the parent-link frame to
+    the joint origin.  When a parent moves, the offset and all descendant
+    axes move with it as a rigid body.
+
+    The robot has three leaf links: ``l6`` (head), ``l13`` (left arm), and
+    ``l20`` (right arm).  No joint limits were supplied, so the teaching UI
+    uses the Robotics Toolbox default slider range of [-pi, pi] for every
+    joint.
+    """
+
+    # (joint name, parent link name, xyz offset in mm, axis at zero pose)
+    joint_specs = (
+        ("j1", None, (0.0, 0.0, 350.0), (0, -1, 0)),
+        ("j2", "l1", (0.0, 0.0, 300.0), (0, -1, 0)),
+        ("j3", "l2", (0.0, 0.0, 300.0), (0, -1, 0)),
+        ("j4", "l3", (0.0, 0.0, 250.950), (0, 0, 1)),
+        ("j5", "l4", (0.0, 0.0, 272.950), (0, 0, 1)),
+        ("j6", "l5", (0.0, 0.0, 116.70), (0, -1, 0)),
+        ("j7", "l4", (0.0, 75.0, 294.350), (0, 1, 0)),
+        ("j8", "l7", (0.0, 165.0, 0.0), (1, 0, 0)),
+        ("j9", "l8", (0.0, 198.3, 0.0), (0, 1, 0)),
+        ("j10", "l9", (0.0, 94.7, 0.0), (1, 0, 0)),
+        ("j11", "l10", (0.0, 128.5, 0.0), (0, 1, 0)),
+        ("j12", "l11", (0.0, 58.5, 0.0), (1, 0, 0)),
+        ("j13", "l12", (0.0, 128.5, 0.0), (0, 1, 0)),
+        ("j14", "l4", (0.0, -75.0, 294.350), (0, -1, 0)),
+        ("j15", "l14", (0.0, -165.0, 0.0), (1, 0, 0)),
+        ("j16", "l15", (0.0, -198.3, 0.0), (0, -1, 0)),
+        ("j17", "l16", (0.0, -94.7, 0.0), (1, 0, 0)),
+        ("j18", "l17", (0.0, -128.5, 0.0), (0, -1, 0)),
+        ("j19", "l18", (0.0, -58.5, 0.0), (1, 0, 0)),
+        # Kept as supplied: unlike j14/j16/j18, j20 has a +Y axis.
+        ("j20", "l19", (0.0, -128.5, 0.0), (0, 1, 0)),
+    )
+
+    links_by_name = {}
+    links = []
+    for joint_name, parent_name, xyz_mm, axis in joint_specs:
+        x, y, z = (value * 0.001 for value in xyz_mm)
+        ets = rtb.ET.tx(x) * rtb.ET.ty(y) * rtb.ET.tz(z)
+        ets *= _revolute_et(axis)
+
+        link_name = f"l{joint_name[1:]}"
+        parent = links_by_name.get(parent_name) if parent_name is not None else None
+        link = rtb.ELink(ets, name=link_name, parent=parent)
+        links_by_name[link_name] = link
+        links.append(link)
+
+    return rtb.ERobot(links, name="kaanh_humanoid")
+
+
+def _revolute_et(axis):
+    """Return an elementary revolute transform for an axis-aligned unit axis."""
+
+    axis = tuple(axis)
+    transforms = {
+        (1, 0, 0): rtb.ET.Rx,
+        (-1, 0, 0): rtb.ET.Rx,
+        (0, 1, 0): rtb.ET.Ry,
+        (0, -1, 0): rtb.ET.Ry,
+        (0, 0, 1): rtb.ET.Rz,
+        (0, 0, -1): rtb.ET.Rz,
+    }
+    try:
+        return transforms[axis](flip=any(value < 0 for value in axis))
+    except KeyError as exc:
+        raise ValueError(f"关节轴必须是单位坐标轴，收到 {axis}") from exc
+
+
+def create_ka_std7():
+    """Create the KA-Std-7 SRS seven-axis arm using standard DH parameters.
+
+    The arm is a 3-1-3 SRS structure: joints 1--3 form the shoulder,
+    joint 4 is the elbow, and joints 5--7 form the wrist.  The dimensions
+    are reconstructed from the assembly markers (metres):
+
+    * base to shoulder centre: 0.165
+    * shoulder to elbow centre: 0.293
+    * elbow to wrist centre: 0.187
+
+    ``tool`` includes the 0.1285 m offset from the wrist centre to ``tool0``
+    shown in the supplied assembly description.  Remove or replace
+    ``robot.tool`` when a different end effector/TCP is mounted.
+
+    Returns:
+        rtb.DHRobot: A seven-revolute-joint standard-DH robot.  Joint angles
+        are in radians and all distances are in metres.
+    """
+
+    # Standard DH: A_i = Rz(q_i) Tz(d_i) Tx(a_i) Rx(alpha_i).
+    # With a_i = 0, the SRS geometry is encoded by the alternating twist
+    # angles and the three offsets along the preceding joint axes.
+    links = [
+        rtb.RevoluteDH(d=0.165, a=0.0, alpha=-np.pi / 2, name="Joint1"),
+        rtb.RevoluteDH(d=0.0, a=0.0, alpha=np.pi / 2, name="Joint2"),
+        rtb.RevoluteDH(d=0.293, a=0.0, alpha=np.pi / 2, name="Joint3"),
+        rtb.RevoluteDH(d=0.0, a=0.0, alpha=-np.pi / 2, name="Joint4"),
+        rtb.RevoluteDH(d=0.187, a=0.0, alpha=-np.pi / 2, name="Joint5"),
+        rtb.RevoluteDH(d=0.0, a=0.0, alpha=np.pi / 2, name="Joint6"),
+        rtb.RevoluteDH(d=0.0, a=0.0, alpha=0.0, name="Joint7"),
+    ]
+
+    robot = rtb.DHRobot(links, name="kaanh_std7")
+    robot.tool = SE3.Tz(0.1285)
+    return robot
 
 def create_ka_ur():
     mm = 0.001
@@ -85,28 +199,16 @@ def create_ka_ur():
     return robot
 
 if __name__ == "__main__":
-    robot = create_ka_ur()
-    print(robot) # 你会发现它还是 6 轴 (n=6)，虚连杆不会增加自由度
-    
-    q0 = np.zeros(6)
-    
-    try:
-        env = rtb.backends.PyPlot.PyPlot()
-        env.launch()
-        env.add(robot)
-        
-        robot.q = q0
+    robot = create_humaniod_robot()
+    print(robot)
+    robot.q = np.zeros(robot.n)
 
-        T0 = robot.fkine(q0)
-        print("\n【零位末端位姿】")
-        print(T0)
-        
-        # 调整视角以看清“直角”结构
-        env.ax.set_xlim([-0.8, 0.8])
-        env.ax.set_ylim([-0.8, 0.8])
-        env.ax.set_zlim([0.0, 1.2])
-        
-        print("\n正在显示优化后的模型...")
-        env.hold()
+    try:
+        print("\n打开 20 个关节的滑条窗口；拖动滑条检查各轴的正方向。")
+        robot.teach(
+            q=robot.q,
+            backend="pyplot",
+            limits=[-1.2, 1.2, -1.4, 1.4, 0.0, 2.1],
+        )
     except Exception as e:
-        print(f"绘图错误: {e}")
+        print(f"滑条绘图错误: {e}")

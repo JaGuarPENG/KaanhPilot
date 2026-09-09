@@ -22,13 +22,27 @@ from commands.setup import RobotSetup
 from commands.single_shot import SingleShotExecutor
 from perception.roi_localizer import RoiPointCloudLocalizer
 from robot.kaanh_backend import KaanhRobotBackend
-from robot.robot_dh import create_ka_ur
+from robot.robot_dh import create_humaniod_robot
 from yolo.contracts.yolo_structs import Detection
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config"
 WINDOW_NAME = "snapshot_pick"
+
+# ``create_humaniod_robot`` uses the visual-model joint order
+# [waist(4), head(2), arm1(7), arm2(7)].  Controller state is flattened in
+# controller order [arm1(7), arm2(7), waist(4), head_yaw(1), head_pitch(1)].
+# This is the same order conversion used by seven_controller.py.
+RTB_FROM_REAL = np.array(
+    [
+        17, 16, 15, 14,
+        18, 19,
+        0, 1, 2, 3, 4, 5, 6,
+        7, 8, 9, 10, 11, 12, 13,
+    ],
+    dtype=int,
+)
 
 
 class SnapshotPickState(Enum):
@@ -122,7 +136,7 @@ class SnapshotPickApp:
     def run(self) -> None:
         """启动应用并运行 3D 机器人窗口主循环。"""
         self.start()
-        robot_model = create_ka_ur()
+        robot_model = create_humaniod_robot()
         environment = rtb.backends.PyPlot.PyPlot()
         environment.launch()
         environment.add(robot_model)
@@ -238,7 +252,7 @@ class SnapshotPickApp:
         self._control_robot.set_pgm_vel(20)
         self._control_robot.set_jog_vel(30)
         self._control_robot.set_jog_coordinate()
-        self._control_robot.set_tool(tool_id=0)
+        # self._control_robot.set_tool(tool_id=0)
 
     def _connect_monitor_robot(self) -> None:
         if not self._monitor_robot.connect():
@@ -248,12 +262,15 @@ class SnapshotPickApp:
     def _monitor_loop(self) -> None:
         try:
             while not self._stop_event.is_set():
-                data = self._monitor_robot.get_status()
-                motion = ((data or {}).get("ret_context") or {}).get("motion_msg") or {}
-                motor_pos = motion.get("motor_pos")
-                if isinstance(motor_pos, list) and motor_pos and isinstance(motor_pos[0], list):
+                controller_joints_deg = self._monitor_robot.get_robot_state().joints_deg
+                if (
+                    controller_joints_deg is not None
+                    and len(controller_joints_deg) > int(RTB_FROM_REAL.max())
+                ):
                     with self._lock:
-                        self._joints_deg = motor_pos[0]
+                        self._joints_deg = np.asarray(
+                            controller_joints_deg, dtype=float
+                        )[RTB_FROM_REAL].tolist()
                 time.sleep(0.02)
         except Exception as error:
             print(f"[监控] 异常: {error}")
@@ -270,8 +287,17 @@ class SnapshotPickApp:
                     executor.move_init_pose()
                     print("[Home] 完成。")
                 elif command == "execute_pick":
+                    self._control_robot.hand_en(15)
+                    self._control_robot.hand_move(15, 6000, 0, 0, 0, 0, 0, 1000, 1000)
                     self._single_shot.execute(str(payload))
                     print(f"[抓取] {payload} 的预抓取运动完成。")
+                    self._control_robot.hand_move(15, 6000,5800,6000,6000,6000,6000,1000,1000)
+                    print(f"[抓取] {payload} 的抓取完成。")
+                    time.sleep(5)
+                    self._control_robot.hand_move(15, 6000, 0, 0, 0, 0, 0, 1000, 1000)
+                    print(f"[抓取] {payload} 的复位完成。")
+                    executor.move_arm_by_tool_offset(0,[-50,0,-100])
+                    print(f"[抓取] {payload} 的后退完成。")
                 else:
                     print(f"[控制] 未知命令: {command}")
             except Exception as error:

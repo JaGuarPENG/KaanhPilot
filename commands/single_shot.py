@@ -33,7 +33,8 @@ class SingleShotCommand:
         self.warmup_seconds = self.robot_config.camera_warmup_seconds
         self.session = self.robot_setup.setup_session(self.detector, self.target)
         self.cam_transform = self.robot_setup.setup_camera_transform()
-        self.offset = 0.25
+        # 工具坐标系下的三维预抓取偏置（x、y、z），单位为米。
+        self.offset = np.array((0.0, 0.0, 0.25), dtype=np.float64)
 
     def single_shot(self) -> None:
         if not self.robot.connect():
@@ -74,14 +75,15 @@ class SingleShotCommand:
         else:
             print("[SingleShot] 未能获取相机观测结果")
             return 0
-        tool_z_in_base = quaternion_to_rotation(tuple(rbt_pq[3:]))[:, 2]
-        target = transform_result.target_point_base_m - self.offset * tool_z_in_base
+        # 将工具坐标系中的三维偏置转换到机器人基坐标系。
+        offset_in_base = quaternion_to_rotation(tuple(rbt_pq[3:])) @ self.offset
+        target = transform_result.target_point_base_m - offset_in_base
         target_pq = [*(value * 1000.0 for value in target), *rbt_pq[3:]]
         trans_result = np.zeros(6, dtype=np.float64)
         ad.s_pq2pe(target_pq,trans_result,'321')
         trans_result_deg = np.concatenate((trans_result[:3], np.degrees(trans_result[3:])))
         print(f"[SingleShot] 目标点偏置后: {trans_result_deg}")
-        self.robot.movel(trans_result_deg.tolist(), [100, 200, 100])
+        self.robot.movel_model(0, trans_result_deg.tolist())
 
         # checker = StablePoseChecker(required_cycles=3)
         # delta_pq = calculate_pq_delta(rbt_pq, target_pq, rotation_frame="local")
@@ -114,7 +116,7 @@ class SingleShotExecutor:
         localizer,
         camera_transform,
         tracker_config,
-        offset_m: float = 0.25,
+        offset_m: tuple[float, float, float] = (0.0, -0.04, 0.305),
     ) -> None:
         self._robot = robot
         self._camera = camera
@@ -122,19 +124,32 @@ class SingleShotExecutor:
         self._localizer = localizer
         self._camera_transform = camera_transform
         self._tracker_config = tracker_config
-        self._offset_m = offset_m
+        self._offset_m = np.asarray(offset_m, dtype=np.float64)
+        if self._offset_m.shape != (3,):
+            raise ValueError("offset_m 必须是包含 x、y、z 的三维偏置")
 
     def _move_to_pregrasp(self, target_point_base_m: np.ndarray, tcp_pq: list[float]) -> None:
-        """移动到目标点的预抓取位置"""
-        tool_z_in_base = quaternion_to_rotation(tuple(tcp_pq[3:]))[:, 2]
-        pregrasp_point_base_m = target_point_base_m - self._offset_m * tool_z_in_base
+        """根据工具坐标系下的三维偏置移动到目标点的预抓取位置。"""
+        # 将工具坐标系中的（x、y、z）偏置转换到机器人基坐标系。
+        offset_in_base = quaternion_to_rotation(tuple(tcp_pq[3:])) @ self._offset_m
+        pregrasp_point_base_m = target_point_base_m - offset_in_base
+        # 暂时保持机器人当前的 X 坐标（高度），仅使用偏置后的目标 Y、Z。
+        # tcp_pq 中的位置单位为毫米，此处转换为米。
+        pregrasp_point_base_m[0] = tcp_pq[0] / 1000.0
+        # 预抓取姿态沿用机器人当前的 TCP 姿态。
         pregrasp_pq = [*(value * 1000.0 for value in pregrasp_point_base_m), *tcp_pq[3:]]
         trans_result = np.zeros(6, dtype=np.float64)
         ad.s_pq2pe(pregrasp_pq, trans_result, '321')
         trans_result_deg = np.concatenate((trans_result[:3], np.degrees(trans_result[3:])))
         print(f"[SingleShotExecutor] 移动到预抓取位置: {trans_result_deg}")
-        self._robot.movel(trans_result_deg.tolist(), [100, 200, 100])
-
+        self._robot.movel_model(0, trans_result_deg.tolist())
+        # 往前移动准备抓取
+        z_offset = [0,0,0.13] #m
+        trans_z_offset = quaternion_to_rotation(tuple(tcp_pq[3:])) @ z_offset
+        grasp_point_base_m = pregrasp_point_base_m + trans_z_offset
+        grasp_result_deg = np.concatenate((grasp_point_base_m * 1000.0, np.degrees(trans_result[3:]))) #mm, deg
+        print(f"[SingleShotExecutor] 移动到抓取位置: {grasp_result_deg}")
+        self._robot.movel_model(0, grasp_result_deg.tolist())
     def execute(self, target_id: str) -> None:
         # 这里不初始化资源，只执行一次新任务
         observation = self._camera.get_latest_observation()

@@ -1,4 +1,5 @@
 from typing import Sequence
+import math
 import websocket
 import struct
 import json
@@ -7,6 +8,34 @@ import time
 
 from robot.follower_udp_client import FollowerUdpClient
 from robot.robot_state import RobotState, parse_robot_state
+
+
+# Controller order: arm1(7), arm2(7), waist(4), head_yaw(1), head_pitch(1).
+MODEL_JOINT_COUNTS = (7, 7, 4, 1, 1)
+MODEL_JOINT_TARGET_TYPES = (
+    "OffsetSevenAxis_JointTarget",
+    "OffsetSevenAxis_JointTarget",
+    "AbenicsModel_JointTarget",
+    "ExAxisModel_JointTarget",
+    "ExAxisModel_JointTarget",
+)
+TOTAL_JOINT_COUNT = sum(MODEL_JOINT_COUNTS)
+
+# Controller ``mvl`` target order: arm1 TCP/axis, arm2 TCP/axis, waist,
+# head_yaw, head_pitch.  Only arm TCP targets are commanded by this backend.
+MOVEL_TARGET_COUNTS = (6, 1, 6, 1, 3, 1, 1)
+MOVEL_TARGET_TYPES = (
+    "EE_XYZABC",
+    "EE_A",
+    "EE_XYZABC",
+    "EE_A",
+    "EE_ABC",
+    "EE_A",
+    "EE_A",
+)
+MOVEL_ARM_MODEL_IDS = (0, 1)
+MOVEL_OPTIONS = "--vel=v100 --zone=z0 --pos_offset=o0 --ch=-1 --tg=2 --reinit=1"
+
 
 class KaanhRobotBackend:
     """Kaanh 机器人后端客户端
@@ -117,90 +146,169 @@ class KaanhRobotBackend:
         self._send_raw_command("ds")
 
 
-    def movej(self, joints, vels):
-        """发送关节运动指令"""
-        try:
-            if len(joints) != 6:
-                print(f"[错误] movej 需要 6 个关节角度")
-                return None
-            
-            joint_strs = [f"DOUBLE{{{j:.6f}}}" for j in joints]
-            joint_inner_str = ",".join(joint_strs)
+    def movej(self, joints_deg: Sequence[float]):
+        """发送全身关节运动指令。
 
-            vel_strs = [f"DOUBLE{{{v:.6f}}}" for v in vels]
-            vel_inner_str = ",".join(vel_strs)
-  
-            # 【修改】注意 Speed 后面加了三层花括号 {{{...}}} 
-            # f-string中 {{ 转义为 {，所以 {{{ }}} 解析为 {内容}
-            cmd = f"manual_mvaj --pos=JointTarget{{UrModel_JointTarget{{{joint_inner_str}}}}} --vel=Speed{{{vel_inner_str}}}"
-            
-            # 这里的 response 会一直阻塞直到机器人动作完成并返回
-            response = self._send_raw_command(cmd)
-            return response
-            
-        except Exception as e:
-            print(f"[MoveJ] 执行出错: {e}")
-            return None
-        
-    def movel(self, rbt_pq, vels=None, all_ee=False, ee_ids=None):
-        """Send a linear motion command in the controller's ``manual_mvl`` format.
-
-        ``rbt_pq`` accepts one ``[x, y, z, a, b, c]`` pose or a sequence of
-        such poses for a multi-end-effector robot.  Position values are in mm
-        and orientation values are in degrees, as required by ``EE_XYZABC``.
+        ``joints_deg`` 必须包含 20 个以度为单位的关节角，且顺序固定为
+        ``[arm1(7), arm2(7), waist(4), head_yaw(1), head_pitch(1)]``。
+        控制器已支持的多模型 ``manual_mvaj`` 格式不发送速度项。
         """
         try:
-            if all_ee and ee_ids is not None:
-                raise ValueError("all_ee and ee_ids cannot be used together")
+            values = self._joint_values(joints_deg, TOTAL_JOINT_COUNT, "movej")
+            return self._send_raw_command(self._build_movej_command(values))
+        except (TypeError, ValueError) as error:
+            print(f"[MoveJ] 参数错误: {error}")
+            return None
+        except Exception as error:
+            print(f"[MoveJ] 执行出错: {error}")
+            return None
 
-            is_single_pose = (
-                isinstance(rbt_pq, Sequence)
-                and len(rbt_pq) == 6
-                and not isinstance(rbt_pq[0], Sequence)
+    def movej_model(self, model_id: int, joints_deg: Sequence[float]):
+        """移动一个控制器模型，其余模型保持读取到的实际关节角。
+
+        ``model_id`` 的含义为：0=臂1、1=臂2、2=腰部、3=头偏航、4=头俯仰。
+        ``joints_deg`` 的长度必须分别为 7、7、4、1、1，单位为度。
+        控制器报文仍包含全部五个模型目标，因此本方法会先读取完整的 20 轴
+        当前目标关节角，再仅替换请求模型对应的切片。
+        """
+        try:
+            if isinstance(model_id, bool) or not isinstance(model_id, int):
+                raise ValueError("model_id 必须是 0 到 4 的整数")
+            if not 0 <= model_id < len(MODEL_JOINT_COUNTS):
+                raise ValueError("model_id 必须在 0 到 4 之间")
+
+            values = self._joint_values(
+                joints_deg, MODEL_JOINT_COUNTS[model_id], "movej_model"
             )
-            poses = [rbt_pq] if is_single_pose else rbt_pq
-            if not isinstance(poses, Sequence) or not poses:
-                raise ValueError("rbt_pq must contain at least one pose")
-
-            ee_targets = []
-            for pose in poses:
-                if not isinstance(pose, Sequence) or len(pose) != 6:
-                    raise ValueError("every pose must contain exactly 6 values")
-                pose_values = ",".join(
-                    f"DOUBLE{{{float(value):.6f}}}" for value in pose
-                )
-                ee_targets.append(
-                    f"EE_XYZABC{{{pose_values},INT32{{0}},INT32{{0}},BOOL{{false}}}}"
-                )
-
-            cmd = f"manual_mvl --pe=RobotTarget{{{','.join(ee_targets)}}}"
-            if vels is not None:
-                values = (
-                    vels
-                    if isinstance(vels, Sequence) and not isinstance(vels, (str, bytes))
-                    else [vels]
-                )
-                speed_values = ",".join(
-                    f"DOUBLE{{{float(value):.6f}}}" for value in values
-                )
-                cmd += f" --vel=Speed{{{speed_values}}}"
-            if all_ee:
-                cmd += " --all_ee"
-            if ee_ids is not None:
-                ids = (
-                    ee_ids
-                    if isinstance(ee_ids, Sequence) and not isinstance(ee_ids, (str, bytes))
-                    else [ee_ids]
-                )
-                cmd += f" --ee_ids={{{','.join(str(int(ee_id)) for ee_id in ids)}}}"
-
-            return self._send_raw_command(cmd)
-        except (TypeError, ValueError, IndexError) as e:
-            print(f"[MoveL] Invalid parameter: {e}")
+            state = self.get_robot_state()
+            current = state.joints_deg
+            full_target = self._joint_values(
+                current, TOTAL_JOINT_COUNT, "当前机器人关节状态"
+            )
+            start = sum(MODEL_JOINT_COUNTS[:model_id])
+            full_target[start : start + len(values)] = values
+            return self.movej(full_target)
+        except (TypeError, ValueError) as error:
+            print(f"[MoveJModel] 参数错误: {error}")
             return None
-        except Exception as e:
-            print(f"[MoveL] Execution failed: {e}")
+        except Exception as error:
+            print(f"[MoveJModel] 执行出错: {error}")
             return None
+
+    @staticmethod
+    def _joint_values(
+        joints_deg: Sequence[float] | None, expected_count: int, label: str
+    ) -> list[float]:
+        """Validate and normalize one controller-order joint vector."""
+        if joints_deg is None or isinstance(joints_deg, (str, bytes)):
+            raise ValueError(f"{label} 需要 {expected_count} 个关节角度")
+        try:
+            values = [float(value) for value in joints_deg]
+        except TypeError as error:
+            raise ValueError(f"{label} 需要可迭代的关节角度") from error
+        except (ValueError, OverflowError) as error:
+            raise ValueError(f"{label} 包含非数值关节角度") from error
+        if len(values) != expected_count:
+            raise ValueError(f"{label} 需要 {expected_count} 个关节角度，收到 {len(values)} 个")
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError(f"{label} 包含非有限关节角度")
+        return values
+
+    @staticmethod
+    def _build_movej_command(joints_deg: Sequence[float]) -> str:
+        """Build the validated multi-model ``manual_mvaj`` command."""
+        values = KaanhRobotBackend._joint_values(
+            joints_deg, TOTAL_JOINT_COUNT, "movej"
+        )
+        targets = []
+        offset = 0
+        for target_type, joint_count in zip(
+            MODEL_JOINT_TARGET_TYPES, MODEL_JOINT_COUNTS
+        ):
+            group = values[offset : offset + joint_count]
+            encoded = ",".join(f"DOUBLE{{{value:.6f}}}" for value in group)
+            targets.append(f"{target_type}{{{encoded}}}")
+            offset += joint_count
+        return f"manual_mvaj --pos=JointTarget{{{','.join(targets)}}}"
+
+    def movel(self, arm1_pe: Sequence[float], arm2_pe: Sequence[float]):
+        """同步移动双臂。
+
+        两个参数都是 ``[x, y, z, a, b, c]``，位置单位为 mm、姿态单位为度。
+        腰部和头部，以及两臂的附属 ``EE_A`` 信息从当前控制器状态读取并
+        原样回填到完整的七段 ``mvl`` 报文中。
+        """
+        try:
+            targets = self._current_movel_targets()
+            targets[0] = self._joint_values(arm1_pe, 6, "arm1_pe")
+            targets[2] = self._joint_values(arm2_pe, 6, "arm2_pe")
+            return self._send_raw_command(self._build_movel_command(targets))
+        except (TypeError, ValueError) as error:
+            print(f"[MoveL] 参数错误: {error}")
+            return None
+        except Exception as error:
+            print(f"[MoveL] 执行出错: {error}")
+            return None
+
+    def movel_model(self, model_id: int, pe: Sequence[float]):
+        """移动指定手臂。
+
+        ``model_id`` 只能是 0（臂1）或 1（臂2）；``pe`` 为该臂的六维
+        ``[x, y, z, a, b, c]``，位置单位 mm、姿态单位度。其他六段目标均从
+        当前控制器状态保留。
+        """
+        try:
+            if isinstance(model_id, bool) or model_id not in MOVEL_ARM_MODEL_IDS:
+                raise ValueError("movel_model 的 model_id 只能是 0（臂1）或 1（臂2）")
+            targets = self._current_movel_targets()
+            targets[model_id * 2] = self._joint_values(pe, 6, "pe")
+            return self._send_raw_command(self._build_movel_command(targets))
+        except (TypeError, ValueError) as error:
+            print(f"[MoveLModel] 参数错误: {error}")
+            return None
+        except Exception as error:
+            print(f"[MoveLModel] 执行出错: {error}")
+            return None
+
+    def _current_movel_targets(self) -> list[list[float]]:
+        """Read the seven controller PE groups required by an ``mvl`` command."""
+        state = self.get_robot_state()
+        if len(state.models) < len(MODEL_JOINT_COUNTS):
+            raise ValueError("当前机器人状态不包含全部五个模型")
+
+        arm1, arm2, waist, head_yaw, head_pitch = state.models[:5]
+        raw_targets = (
+            arm1.pe,
+            arm1.axis_pe,
+            arm2.pe,
+            arm2.axis_pe,
+            waist.pe,
+            head_yaw.pe,
+            head_pitch.pe,
+        )
+        return [
+            self._joint_values(values, count, f"当前 PE[{index}]")
+            for index, (values, count) in enumerate(zip(raw_targets, MOVEL_TARGET_COUNTS))
+        ]
+
+    @staticmethod
+    def _build_movel_command(targets: Sequence[Sequence[float]]) -> str:
+        """Build the verified seven-target ``mvl`` command."""
+        if len(targets) != len(MOVEL_TARGET_COUNTS):
+            raise ValueError(f"mvl 需要 {len(MOVEL_TARGET_COUNTS)} 段目标")
+
+        encoded_targets = []
+        for index, (target, target_type, value_count) in enumerate(
+            zip(targets, MOVEL_TARGET_TYPES, MOVEL_TARGET_COUNTS)
+        ):
+            values = KaanhRobotBackend._joint_values(
+                target, value_count, f"mvl PE[{index}]"
+            )
+            encoded = ",".join(f"DOUBLE{{{value:.6f}}}" for value in values)
+            encoded_targets.append(
+                f"{target_type}{{{encoded},INT32{{0}},INT32{{0}},BOOL{{false}}}}"
+            )
+        return f"mvl --pe=RobotTarget{{{','.join(encoded_targets)}}} {MOVEL_OPTIONS}"
 
     def set_jog_vel(self, percent):
         """设置JOG速度百分比 (0-100)"""
@@ -278,6 +386,36 @@ class KaanhRobotBackend:
         self._drain_empty_acks()
         self.follower_udp.close()
         self.follower_state = False
+
+
+
+#################### 灵巧手 #########################
+
+    def hand_en(self,id=15):
+        """灵巧手使能"""
+        self._send_raw_command(f"hand_en --slave_id={id}")
+        time.sleep(0.1)
+
+    def hand_home(self, id=15):
+        """灵巧手回零"""
+        self._send_raw_command(f"hand_home --slave_id={id}")
+        time.sleep(0.1)
+
+    def hand_move(self, id=15, j1=1000, j2=1000, j3=1000, j4=1000, j5=1000, j6=1000, vel=10000, cur=1000):
+        """灵巧手移动到指定位置
+        - j1:大拇指侧摆
+        - j2:大拇指弯曲
+        - j3:食指弯曲
+        - j4:中指弯曲
+        - j5:无名指弯曲
+        - j6:小拇指弯曲
+        - vel:速度
+        - cur:电流
+        """
+        self._send_raw_command(f"hand_mv --slave_id={id} --j1={j1} --j2={j2} --j3={j3} --j4={j4} --j5={j5} --j6={j6} --vel={vel} --cur={cur}")
+        time.sleep(0.1)
+
+#################### 内部方法 #########################
 
     def _pack_header(self, msg_len):
         return struct.pack('<IIQqqq', msg_len, 0x01, 0x1000, 0xA1B2C3D4, 0, 0)
