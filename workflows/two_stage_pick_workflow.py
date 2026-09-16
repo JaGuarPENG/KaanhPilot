@@ -8,7 +8,7 @@ from planner.pose import quaternion_to_rotation
 
 SECOND_PHOTO_OFFSET_TOOL_MM = np.asarray((0.0, 20.0, -400.0))
 PREGRASP_OFFSET_TOOL_MM = np.asarray((0.0, 35.0, -285.0))
-FINAL_APPROACH_OFFSET_TOOL_MM = np.asarray((0.0, 0.0, 135.0))
+FINAL_APPROACH_OFFSET_TOOL_MM = np.asarray((0.0, 0.0, 120.0))
 
 class TwoStagePickWorkflow:
 
@@ -72,6 +72,7 @@ class TwoStagePickWorkflow:
         pregrasp_target_base_mm[0] = rbt_pq_point2[0]
         pregrasp_pe = np.concatenate((pregrasp_target_base_mm, rbt_pe_point2[3:6])) #mm, deg
         self.robot.movel_model(model_id, pregrasp_pe)
+        self.hand_executor.prepare(15)
         print(f"[抓取] 已移动到 {target_id} 的预抓取位置 {pregrasp_target_base_mm}。")
         # 执行抓取
         # 计算最终抓取位置
