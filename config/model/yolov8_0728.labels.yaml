@@ -1,5 +1,0 @@
-# 左侧必须与 .pt checkpoint 内的类别名称完全一致；右侧为项目稳定目标标识。
-model_labels:
-  mineral_water: mineral_water
-  oolong_tea: oolong_tea
-  coco_cola: coco_cola

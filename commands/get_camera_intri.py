@@ -1,4 +1,4 @@
-﻿"""G305、YOLO、Perception 与虚拟控制器 follower 的完整测试入口。"""
+﻿"""获取当前相机的内参，保存为 JSON 文件。目前只支持奥比中光相机。"""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config"
 CAMERA_INTRINSIC_OUTPUT_PATH = DEFAULT_CONFIG_PATH / "camera" / "intri_param_cam0.json"
 
 class GetCameraIntriCommand:
-    """G305、YOLO、Perception 与虚拟控制器 follower 的完整测试入口。"""
+    """获取相机内参的命令。"""
 
     def __init__(self):
         self.config_path: Path = DEFAULT_CONFIG_PATH
@@ -70,7 +70,7 @@ class GetCameraIntriCommand:
             print("intrinsic:", [rgb.fx, rgb.fy, rgb.cx, rgb.cy])
             print("distortion in OpenCV order [k1, k2, p1, p2, k3]:",
                 [dist.k1, dist.k2, dist.p1, dist.p2, dist.k3])
-            print(f"相机内外参已保存至: {CAMERA_INTRINSIC_OUTPUT_PATH}")
+            print(f"相机内参已保存至: {CAMERA_INTRINSIC_OUTPUT_PATH}")
 
         except KeyboardInterrupt:
             pass

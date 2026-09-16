@@ -19,14 +19,12 @@ import roboticstoolbox as rtb
 
 from commands.robot_commands import RobotCommandExecutor
 from commands.setup import RobotSetup
-# from commands.single_shot import SingleShotExecutor
 from commands.snapshot import SnapShotCommand
 from perception.roi_localizer import RoiPointCloudLocalizer
 from robot.kaanh_backend import KaanhRobotBackend
 from robot.robot_dh import create_humaniod_robot
 from yolo.contracts.yolo_structs import Detection
 from commands.hand_commands import HandCommandExecutor
-from planner.pose import quaternion_to_rotation
 from workflows.two_stage_pick_workflow import TwoStagePickWorkflow
 
 
@@ -404,78 +402,6 @@ class SnapshotPickApp:
             self._handle_key("escape")
         elif code < 128:
             self._handle_key(chr(code))
-
-
-    # ---------- 抓取流程原型设计 ----------
-
-    def _two_stage_pick(
-            self,
-            model_id: int,
-            target_id: str,
-            snapshot_command: SnapShotCommand,
-            robot: KaanhRobotBackend,
-            robot_executor: RobotCommandExecutor,
-            hand_executor: HandCommandExecutor
-            ) -> None:
-        """演示两阶段抓取流程：先拍照定位，再发起抓取。"""
-        SECOND_PHOTO_OFFSET_TOOL_MM = np.asarray((0.0, 20.0, -400.0))
-        PREGRASP_OFFSET_TOOL_MM = np.asarray((0.0, 35.0, -285.0))
-        FINAL_APPROACH_OFFSET_TOOL_MM = np.asarray((0.0, 0.0, 135.0))
-
-        if snapshot_command.is_initialized is False:
-            raise RuntimeError("SnapShotCommand 未初始化")
-        # 拍照定位
-        target = snapshot_command.capture_once(target_id)
-        if target is None:
-            print(f"[抓取] 未检测到目标 {target_id}，无法抓取。")
-            return
-        # point = x,y,z in camera frame
-        second_photo_point_mm = (
-            np.asarray(target.target_point_base_m, dtype=float) * 1000.0
-        )
-        rbt_pq = robot.get_robot_state().get_model(model_id).tcp_pq
-        rbt_pe = robot.get_robot_state().get_model(model_id).tcp_pe
-        second_photo_offset_base_mm = quaternion_to_rotation(rbt_pq[3:7]) @ SECOND_PHOTO_OFFSET_TOOL_MM
-        second_photo_target_base_mm = second_photo_point_mm + second_photo_offset_base_mm
-        # 保留拍照高度（x）
-        second_photo_target_base_mm[0] = rbt_pq[0]
-        # 拼装成pe
-        second_photo_pe = np.concatenate((second_photo_target_base_mm, rbt_pe[3:6])) #mm, deg
-        robot.movel_model(model_id, second_photo_pe)
-        print(f"[抓取] 已移动到 {target_id} 的拍照位置 {second_photo_target_base_mm}。")
-        # 执行第二次拍照定位
-        time.sleep(0.5)
-        target_second = snapshot_command.capture_once(target_id)
-        if target_second is None:
-            print(f"[抓取] 第二次拍照未检测到目标 {target_id}，无法抓取。")
-            return
-        # 计算预抓取位置
-        pregrasp_point_mm = (
-            np.asarray(target_second.target_point_base_m, dtype=float) * 1000.0
-        )
-        rbt_pq_point2 = robot.get_robot_state().get_model(model_id).tcp_pq
-        rbt_pe_point2 = robot.get_robot_state().get_model(model_id).tcp_pe
-        pregrasp_offset_base_mm = quaternion_to_rotation(rbt_pq_point2[3:7]) @ PREGRASP_OFFSET_TOOL_MM
-        pregrasp_target_base_mm = pregrasp_point_mm + pregrasp_offset_base_mm
-        # 保留抓取高度（x）
-        pregrasp_target_base_mm[0] = rbt_pq_point2[0]
-        pregrasp_pe = np.concatenate((pregrasp_target_base_mm, rbt_pe_point2[3:6])) #mm, deg
-        robot.movel_model(model_id, pregrasp_pe)
-        print(f"[抓取] 已移动到 {target_id} 的预抓取位置 {pregrasp_target_base_mm}。")
-        # 执行抓取
-        # 计算最终抓取位置
-        time.sleep(0.1)
-        robot_executor.move_arm_by_tool_offset(model_id, FINAL_APPROACH_OFFSET_TOOL_MM)
-        hand_executor.grasp(15)
-        time.sleep(3)
-        robot_executor.move_arm_by_tool_offset(model_id, [-50, 0, 0])
-        robot_executor.move_arm_by_tool_offset(model_id, [0, 0, -250])
-        robot_executor.move_arm_by_tool_offset(model_id, [0, 0, 250])
-        robot_executor.move_arm_by_tool_offset(model_id, [55, 0, 0])
-        hand_executor.release(15)
-        robot_executor.move_arm_by_tool_offset(model_id, [0, 0, -250])
-        robot_executor.move_init_pose()
-
 
 
 

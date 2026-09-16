@@ -1,4 +1,4 @@
-# KaanhOrbit 程序架构
+# KaanhPilot 程序架构
 
 更新时间：2026-09-16
 
@@ -69,7 +69,7 @@
 - 编排机器人动作。
 - 自己维护执行线程或设备锁。
 
-当前 `agent_api.py` 同时包含前端协议、硬件运行时和任务记录，目标是逐步只保留本层职责。前端协议尚未冻结不妨碍内部执行层先稳定。
+当前前端入口尚未冻结；现有 `agent_api.py` 是旧原型，不属于当前受支持主链路。前端定稿后只在本层建立薄适配器。
 
 ### 3.2 应用执行层
 
@@ -228,10 +228,12 @@ PrepareCoffeeWorkflow
 
 ## 8. 当前代码与目标结构的主要差距
 
-- `agent_api.py` 仍同时承担前端适配、硬件初始化和任务管理。
+- 当前受支持入口为 `seven_controller.py` 和 `two_stage_pick.py`，前端适配器待后续重新接入。
 - 当前任务管理是“忙时拒绝”，还不是持久化 FIFO 队列。
-- `TwoStagePickWorkflow.execute()` 尚未连接实际动作流程。
+- `TwoStagePickWorkflow.execute()` 已接入 `two_stage_pick.py` 并完成初步真机验证，但入口文件仍保留重复旧实现。
 - Workflow 和 Command 的类型仍较多依赖具体 `KaanhRobotBackend`。
+- follower 尚未完成多模型双七轴适配，当前兼容 TCP 默认指向模型 0。
+- `mvl` 尚依赖控制器加载与当前多模型变量匹配的工程。
 - 相机公共契约已经形成，是仿真适配可以直接复用的基础。
 - 公司模拟相机的通信形式和数据交付方式仍需与公司侧工程师确认。
 

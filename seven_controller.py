@@ -13,7 +13,7 @@ from robot.kaanh_backend import (
     KaanhRobotBackend,
 )
 from commands.robot_commands import RobotCommandExecutor
-from commands.hand_commands import GraspCommand
+from commands.hand_commands import HandCommandExecutor
 from robot.robot_state import RobotState
 
 # 全局变量
@@ -98,7 +98,7 @@ def control_thread_func():
         robot.set_jog_coordinate()  # 设置JOG坐标系为工具
         print("[控制线程] JOG坐标系设置为工具")
         executor = RobotCommandExecutor(robot)
-        grasp_executor = GraspCommand(robot)
+        grasp_executor = HandCommandExecutor(robot)
 
         while shared_data["running"]:
             try:
