@@ -47,7 +47,6 @@ desktop.ini
 
 # Build and packaging output
 build/
-dist/
 *.egg-info/
 
 outputs/
@@ -55,3 +54,5 @@ data/
 .agents/
 .codex_tmp/
 save
+
+*.lock

@@ -1,9 +1,9 @@
 """双击入口的 Python 启动程序。只组装配置与启动原服务，不改机器人动作逻辑。"""
+"""将下方启动参数 allow-host 的 IP 地址改为本机的ip地址，在iPad上输入本机ip地址加上对应端口启动"""
 import json
 import os
 from pathlib import Path
 import runpy
-import shutil
 import signal
 import socket
 import sys
@@ -12,15 +12,15 @@ import time
 from urllib.request import urlopen
 import webbrowser
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config/launcher"
-
-# ROOT = Path(__file__).resolve().parent
-ROLE = 'backend'
+ROOT = Path(__file__).resolve().parent
+ROLE = 'frontend'
 
 
 def load_config():
-    config = json.loads((DEFAULT_CONFIG_PATH / 'launcher_config.json').read_text(encoding='utf-8-sig'))
+    config_path = Path(os.environ.get('KAANH_LAUNCHER_CONFIG', 'launcher_config.json'))
+    if not config_path.is_absolute():
+        config_path = ROOT / config_path
+    config = json.loads(config_path.read_text(encoding='utf-8-sig'))
     if not isinstance(config, dict):
         raise ValueError('launcher_config.json 必须是 JSON 对象')
     return config
@@ -28,12 +28,12 @@ def load_config():
 
 def local_path(value):
     path = Path(value).expanduser()
-    return path if path.is_absolute() else DEFAULT_CONFIG_PATH / path
+    return path if path.is_absolute() else ROOT / path
 
 
 def lock_launcher():
     # 操作系统锁会在进程退出时释放，避免重复双击启动第二份服务。
-    handle = open(DEFAULT_CONFIG_PATH / 'launcher.lock', 'a+b')
+    handle = open(ROOT / 'launcher.lock', 'a+b')
     try:
         if os.name == 'nt':
             import msvcrt
@@ -64,20 +64,10 @@ def check_port(host, port):
 
 
 def prepare_frontend_data(config):
-    inventory = local_path(config['inventory_file'])
+    # 只提供历史路径；服务取得进程锁后再创建或迁移，已有历史不会被覆盖。
     history = local_path(config['history_file'])
-    if inventory.resolve() == history.resolve():
-        raise ValueError('库存文件与任务历史必须使用不同路径')
-    # 已有数据保持原样：启动程序不会补库存，也不会清空旧任务。
-    if inventory.exists() != history.exists():
-        raise RuntimeError('库存和历史文件只有一个存在，请恢复配套文件，避免丢失任务记录。')
-    if not inventory.exists():
-        inventory.parent.mkdir(parents=True, exist_ok=True)
-        history.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(DEFAULT_CONFIG_PATH / 'data/inventory.json', inventory)
-        history.write_text(json.dumps({'schema_version':1,'revision':0,'active_task_id':None,'tasks':{}},indent=2),encoding='utf-8')
-        print('已创建独立演示库存和空任务历史；以后启动会沿用它们。',flush=True)
-    return inventory, history
+    history.parent.mkdir(parents=True, exist_ok=True)
+    return history
 
 
 def open_when_ready(port, done):
@@ -117,8 +107,8 @@ def main():
     port = config.get('port')
     if isinstance(port,bool) or not isinstance(port,int) or not 1 <= port <= 65535:
         raise ValueError('port 必须是 1～65535 的整数')
-    os.chdir(DEFAULT_CONFIG_PATH)
-    sys.path.insert(0,str(DEFAULT_CONFIG_PATH))
+    os.chdir(ROOT)
+    sys.path.insert(0,str(ROOT))
     lock = lock_launcher()
     done = threading.Event()
     try:
@@ -130,12 +120,25 @@ def main():
                 raise ValueError('backend_url 请填写机器人电脑地址，例如 http://192.168.1.50:8088')
             if not isinstance(config.get('open_browser',True),bool):
                 raise ValueError('open_browser 必须为 true 或 false')
-            check_port('127.0.0.1',port)
-            inventory,history = prepare_frontend_data(config)
+            ipad_addresses = []
+            if os.environ.get('KAANH_IPAD_TEST') == '1':
+                from ipad_network import detect_lan_addresses
+                ipad_addresses = detect_lan_addresses()
+            check_port('0.0.0.0', port) # 用iPad启动时
+            history = prepare_frontend_data(config)
             os.environ['KAANH_API_URL'] = backend_url
             os.environ['KAANH_API_TOKEN'] = token
-            script = DEFAULT_CONFIG_PATH / 'server.py'
-            args = ['--mode','real','--host','127.0.0.1','--port',str(port),'--data',str(inventory),'--tasks-data',str(history)]
+            script = ROOT / 'server.py'
+            # args = ['--mode','real','--host','127.0.0.1','--port',str(port),'--tasks-data',str(history)] # 电脑启动
+            allowed_addresses = ipad_addresses or ['192.168.110.40']
+            args = ['--mode', 'real', '--host', '0.0.0.0', '--port', str(port), '--tasks-data', str(history)]
+            for address in allowed_addresses:
+                args.extend(['--allow-host', f'{address}:{port}'])
+            if ipad_addresses:
+                print('\n请在 iPad Safari 中打开以下局域网地址（Mac 和 iPad 需连接同一网络）：', flush=True)
+                for address in ipad_addresses:
+                    print(f'  http://{address}:{port}', flush=True)
+                print('iPad 请使用上面的地址，不要使用 127.0.0.1。\n', flush=True)
             print(f'前端启动：连接后端 {backend_url}\n页面地址：http://127.0.0.1:{port}',flush=True)
             if config.get('open_browser',True):
                 threading.Thread(target=open_when_ready,args=(port,done),daemon=True).start()
@@ -146,7 +149,7 @@ def main():
             host = config.get('host','0.0.0.0')
             check_port(host,port)
             os.environ['ROBOT_API_TOKEN'] = token
-            script = PROJECT_ROOT / 'agent_api.py'
+            script = ROOT / 'run_movej_api.py'
             task_file = local_path(config['simulation_tasks_file' if dry_run else 'robot_tasks_file'])
             args = ['--host',host,'--port',str(port),'--tasks-data',str(task_file)]
             if dry_run:

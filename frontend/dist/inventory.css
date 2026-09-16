@@ -1,0 +1,30 @@
+/* Binary stock uses the same quiet typography and rounded controls as the picker. */
+.drink-card.sold-out { opacity: .58; cursor: not-allowed; }
+.drink-card.sold-out .drink-image { filter: grayscale(.65); }
+.drink-card.sold-out .card-action { color: #85858d; }
+.is-observing .drink-card.sold-out .card-action { display: block; margin-top: 4px; font-size: 11px; }
+.inventory-test { margin-top: 24px; padding: 20px 24px; border: 1px solid #e6e6eb; border-radius: 18px; background: #ffffff80; }
+.inventory-test-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.inventory-test h2 { margin: 0; font-size: 14px; font-weight: 550; color: #61616a; }
+.inventory-test-heading>span { color: #96969e; font-size: 11px; }
+.inventory-test-form { display: flex; align-items: end; gap: 12px; }
+.inventory-test-form label { display: grid; gap: 6px; flex: 1; min-width: 0; font-size: 11px; color: #85858d; }
+.inventory-test select { width: 100%; min-height: 44px; padding: 9px 12px; border: 1px solid #dedee5; border-radius: 10px; background: #fff; color: #51515a; font: inherit; font-size: 14px; }
+.inventory-test button { min-height: 44px; padding: 9px 22px; border: 1px solid #dedee5; border-radius: 10px; background: #fff; color: #51515a; font-size: 13px; cursor: pointer; }
+.inventory-test :disabled { opacity: .45; cursor: default; }
+.inventory-test p { margin: 12px 0 0; color: #92929a; font-size: 12px; }
+.stock-dialog { width: min(380px, calc(100vw - 40px)); padding: 30px; border: 1px solid #e9e9ed; border-radius: 24px; color: #25252b; background: #fff; box-shadow: 0 24px 80px #19192520; text-align: center; }
+.stock-dialog::backdrop { background: #20202c35; backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+.stock-dialog-mark { display: inline-grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: #f3f3f6; color: #96969e; }
+.stock-dialog h2 { margin: 18px 0 10px; font-size: 22px; font-weight: 550; }
+.stock-dialog p { margin: 0 0 24px; color: #85858d; font-size: 14px; line-height: 1.8; }
+.stock-dialog button { min-height: 46px; width: 100%; border: 0; border-radius: 12px; background: #f1f1f5; color: #45454d; font-size: 14px; cursor: pointer; }
+select:focus-visible { outline: 3px solid #0071e350; outline-offset: 3px; }
+@media(max-width:650px) {
+  .inventory-test { padding: 18px; }
+  .inventory-test-form { flex-wrap: wrap; }
+  .inventory-test-form label { flex-basis: calc(50% - 6px); }
+  .inventory-test-form button { width: 100%; }
+  .inventory-test select { font-size: 16px; padding-left: 8px; }
+  .is-observing .drink-card.sold-out .card-action { grid-column: 2; margin: 0; font-size: 10px; }
+}

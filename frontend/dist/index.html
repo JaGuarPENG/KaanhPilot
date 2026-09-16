@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f5f7">
+  <meta name="description" content="选择饮料或零食，轻触卡片发送机械臂抓取指令。">
+  <title>KAANH · 机械臂抓取控制台</title>
+  <link rel="stylesheet" href="styles.css?v=binary-stock-1">
+  <link rel="stylesheet" href="brand.css?v=binary-stock-1">
+  <link rel="stylesheet" href="categories.css?v=binary-stock-1">
+  <link rel="stylesheet" href="cameras.css?v=binary-stock-1">
+  <link rel="stylesheet" href="inventory.css?v=binary-stock-1">
+  <script src="config.js?v=head-camera-1" defer></script>
+  <script src="app.js?v=local-camera-sim-1" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand company-brand" href="./index.html" aria-label="KAANH 首页"><img class="company-logo" src="assets/company-logo.png" alt="KAANH 公司 Logo"></a>
+      <span class="app-name">机械臂抓取控制台</span>
+      <div class="connection" id="connection"><span class="connection-dot"></span><span id="connection-label">正在连接</span></div>
+    </header>
+
+    <main id="workspace">
+      <section class="capture-menu" id="capture-menu" aria-label="当前抓取与商品菜单" hidden>
+        <div class="capture-selection">
+          <span class="capture-thumbnail drink-image" id="capture-thumbnail" aria-hidden="true"></span>
+          <div class="capture-copy"><span class="capture-kicker" id="capture-phase">正在准备</span><h1 id="capture-item">乌龙茶</h1></div>
+          <span class="capture-indicator" id="capture-indicator" aria-hidden="true"></span>
+        </div>
+        <div class="capture-controls">
+          <span class="capture-count">6 款商品</span>
+          <button class="menu-toggle" id="product-menu-toggle" aria-expanded="false" aria-controls="selection-stage">全部商品 <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></button>
+        </div>
+      </section>
+      <div class="selection-stage" id="selection-stage"><div class="selection-content">
+      <section class="intro" aria-labelledby="page-title">
+        <div class="category-switch" role="tablist" aria-label="抓取类别" data-category="drinks">
+          <span class="category-thumb" aria-hidden="true"></span>
+          <button type="button" role="tab" id="tab-drinks" aria-controls="panel-drinks" aria-selected="true" tabindex="0" data-category="drinks">饮料</button>
+          <button type="button" role="tab" id="tab-snacks" aria-controls="panel-snacks" aria-selected="false" tabindex="-1" data-category="snacks">零食</button>
+        </div>
+        <h1 id="page-title">想喝点什么？</h1>
+        <p class="subtitle" id="category-description">选择一款饮料，即可发送抓取指令。</p>
+      </section>
+
+      <section class="drink-grid category-panel" id="panel-drinks" role="tabpanel" aria-labelledby="tab-drinks" data-category="drinks">
+        <button class="drink-card" disabled data-item="water" aria-label="抓取矿泉水，500 毫升">
+          <span class="card-number" aria-hidden="true">01</span>
+          <span class="selected-mark" aria-hidden="true">✓</span>
+          <span class="drink-image water" role="img" aria-label="蓝色瓶盖的矿泉水瓶"></span>
+          <span class="drink-name">矿泉水</span><span class="drink-description">清爽纯净 <span>·</span> 500 mL</span>
+          <span class="card-action">点击抓取 <span class="arrow" aria-hidden="true">↗</span></span>
+        </button>
+        <button class="drink-card" disabled data-item="cola" aria-label="抓取可乐，330 毫升">
+          <span class="card-number" aria-hidden="true">02</span>
+          <span class="selected-mark" aria-hidden="true">✓</span>
+          <span class="drink-image cola" role="img" aria-label="红色的可乐罐"></span>
+          <span class="drink-name">可乐</span><span class="drink-description">畅快气泡 <span>·</span> 330 mL</span>
+          <span class="card-action">点击抓取 <span class="arrow" aria-hidden="true">↗</span></span>
+        </button>
+        <button class="drink-card" disabled data-item="oolong_tea" aria-label="抓取乌龙茶，500 毫升">
+          <span class="card-number" aria-hidden="true">03</span>
+          <span class="selected-mark" aria-hidden="true">✓</span>
+          <span class="drink-image tea" role="img" aria-label="乌龙茶的瓶装茶饮示意图"></span>
+          <span class="drink-name">乌龙茶</span><span class="drink-description">醇香回甘 <span>·</span> 500 mL</span>
+          <span class="card-action">点击抓取 <span class="arrow" aria-hidden="true">↗</span></span>
+        </button>
+      </section>
+
+      <section class="drink-grid category-panel" id="panel-snacks" role="tabpanel" aria-labelledby="tab-snacks" data-category="snacks" hidden>
+        <button class="drink-card" disabled data-item="potato_chips" aria-label="抓取薯片，一袋">
+          <span class="card-number" aria-hidden="true">01</span>
+          <span class="selected-mark" aria-hidden="true">✓</span>
+          <span class="drink-image snack-image chips" role="img" aria-label="金黄色包装的薯片"></span>
+          <span class="drink-name">薯片</span><span class="drink-description">咔嚓香脆 <span>·</span> 袋装</span>
+          <span class="card-action">点击抓取 <span class="arrow" aria-hidden="true">↗</span></span>
+        </button>
+        <button class="drink-card" disabled data-item="cookies" aria-label="抓取饼干，一包">
+          <span class="card-number" aria-hidden="true">02</span>
+          <span class="selected-mark" aria-hidden="true">✓</span>
+          <span class="drink-image snack-image cookies" role="img" aria-label="蓝白色包装的巧克力豆饼干"></span>
+          <span class="drink-name">饼干</span><span class="drink-description">酥香轻甜 <span>·</span> 包装</span>
+          <span class="card-action">点击抓取 <span class="arrow" aria-hidden="true">↗</span></span>
+        </button>
+        <button class="drink-card" disabled data-item="chocolate" aria-label="抓取巧克力，一条">
+          <span class="card-number" aria-hidden="true">03</span>
+          <span class="selected-mark" aria-hidden="true">✓</span>
+          <span class="drink-image snack-image chocolate" role="img" aria-label="深棕色包装的巧克力条"></span>
+          <span class="drink-name">巧克力</span><span class="drink-description">浓醇可可 <span>·</span> 条装</span>
+          <span class="card-action">点击抓取 <span class="arrow" aria-hidden="true">↗</span></span>
+        </button>
+      </section>
+
+      </div></div>
+
+      <section class="camera-workspace" id="camera-workspace" aria-labelledby="camera-title" hidden>
+        <header class="camera-heading">
+          <div><p class="camera-eyebrow">ROBOT VISION</p><h2 id="camera-title">跟随它的视线。</h2></div>
+          <span class="demo-label"><span aria-hidden="true"></span>演示画面</span>
+        </header>
+        <div class="camera-grid">
+          <figure class="camera-card camera-head" data-camera="head">
+            <div class="camera-viewport">
+              <img class="camera-image" src="assets/camera-head.svg" alt="头部相机演示占位图：工作台与待抓取的瓶装饮料" width="1280" height="800">
+              <div class="camera-error" hidden>画面暂不可用<span>等待相机连接</span></div>
+              <span class="view-tag">HEAD</span>
+              <span class="frame-corner corner-tl" aria-hidden="true"></span><span class="frame-corner corner-br" aria-hidden="true"></span>
+              <span class="camera-crosshair" aria-hidden="true"></span>
+              <span class="placeholder-note">示意画面 · 非实时</span>
+            </div>
+            <figcaption><span><span class="camera-number">01</span>头部视角</span><span class="camera-description">观察工作空间</span></figcaption>
+          </figure>
+          <figure class="camera-card camera-left" data-camera="left">
+            <div class="camera-viewport">
+              <img class="camera-image" src="assets/camera-left.svg" alt="左手相机演示占位图：左侧机械手与工作台" width="1280" height="800">
+              <div class="camera-error" hidden>画面暂不可用<span>等待相机连接</span></div>
+              <span class="view-tag">LEFT HAND</span>
+              <span class="frame-corner corner-tl" aria-hidden="true"></span><span class="frame-corner corner-br" aria-hidden="true"></span>
+              <span class="camera-crosshair" aria-hidden="true"></span>
+              <span class="placeholder-note">示意画面 · 非实时</span>
+            </div>
+            <figcaption><span><span class="camera-number">02</span>左手视角</span><span class="camera-description">近距离观察</span></figcaption>
+          </figure>
+          <figure class="camera-card camera-right" data-camera="right">
+            <div class="camera-viewport">
+              <img class="camera-image" src="assets/camera-right.svg" alt="右手相机演示占位图：右侧机械手与瓶装饮料" width="1280" height="800">
+              <div class="camera-error" hidden>画面暂不可用<span>等待相机连接</span></div>
+              <span class="view-tag">RIGHT HAND</span>
+              <span class="frame-corner corner-tl" aria-hidden="true"></span><span class="frame-corner corner-br" aria-hidden="true"></span>
+              <span class="camera-crosshair" aria-hidden="true"></span>
+              <span class="placeholder-note">示意画面 · 非实时</span>
+            </div>
+            <figcaption><span><span class="camera-number">03</span>右手视角</span><span class="camera-description">近距离观察</span></figcaption>
+          </figure>
+        </div>
+        <div class="camera-footnote"><p>从观察到拿取，每一步都看得见。<span>当前为相机视角演示。</span></p><button class="return-button" id="return-products">返回商品 <span aria-hidden="true">↗</span></button></div>
+      </section>
+
+      <section class="task-panel" aria-label="抓取任务状态">
+        <div class="task-main">
+          <div class="status-symbol" id="status-symbol" aria-hidden="true"><span class="idle-symbol"></span></div>
+          <div class="task-copy" role="status" aria-live="polite" aria-atomic="true"><h2 id="status-title">准备好，为你取来。</h2><p id="status-detail">选择上方饮料，体验一次抓取流程。</p></div>
+          <button id="stop-button" class="stop-button" disabled><span aria-hidden="true">■</span> 停止任务</button>
+        </div>
+        <div class="task-progress" id="task-progress" hidden>
+          <ol aria-label="任务进度"><li data-step="1">确认库存</li><li data-step="2">执行抓取</li><li data-step="3">放置完成</li></ol>
+          <div class="progress-track"><div id="progress-fill"></div></div>
+        </div>
+      </section>
+      <section id="inventory-test" class="inventory-test" aria-labelledby="inventory-test-title" hidden>
+        <div class="inventory-test-heading"><h2 id="inventory-test-title">库存测试</h2><span>模拟模式</span></div>
+        <form id="inventory-test-form" class="inventory-test-form">
+          <label>商品<select id="inventory-test-item" name="item_id">
+            <option value="water">矿泉水</option><option value="cola">可乐</option><option value="oolong_tea">乌龙茶</option>
+            <option value="potato_chips">薯片</option><option value="cookies">饼干</option><option value="chocolate">巧克力</option>
+          </select></label>
+          <label>测试场景<select id="inventory-test-scenario" name="scenario">
+            <option value="available">有库存</option><option value="sold-out">已售尽</option><option value="confirmation-empty">确认时才发现售尽</option>
+          </select></label>
+          <button id="inventory-test-apply" type="submit">应用</button>
+        </form>
+        <p id="inventory-test-feedback" role="status">选择商品与场景后应用，库存会同步到所有页面。</p>
+      </section>
+    </main>
+    <dialog id="sold-out-dialog" class="stock-dialog" aria-labelledby="sold-out-title" aria-describedby="sold-out-description">
+      <span class="stock-dialog-mark" aria-hidden="true">—</span>
+      <h2 id="sold-out-title">该商品已售尽</h2>
+      <p id="sold-out-description">这次未进行抓取，请选择其他商品。</p>
+      <form method="dialog"><button id="sold-out-dismiss" autofocus>选择其他商品</button></form>
+    </dialog>
+    <footer><span>KAANH</span></footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,22 @@
+/* Preserve the supplied logo's original colors and aspect ratio. */
+.brand.company-brand {
+  width: 12.5rem;
+  max-width: 45vw;
+  min-width: 0;
+  flex: 0 1 12.5rem;
+}
+
+.company-logo {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+@media (max-width: 650px) {
+  .brand.company-brand {
+    width: 9rem;
+    flex-basis: 9rem;
+    max-width: calc(100% - 7rem);
+  }
+}
