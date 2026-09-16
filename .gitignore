@@ -20,6 +20,7 @@ ENV/
 Log/
 save/cloud/
 save/pic/
+save/target_point/
 
 # Model weights and other large generated ML artifacts
 # *.pt
@@ -48,3 +49,9 @@ desktop.ini
 build/
 dist/
 *.egg-info/
+
+outputs/
+data/
+.agents/
+.codex_tmp/
+save

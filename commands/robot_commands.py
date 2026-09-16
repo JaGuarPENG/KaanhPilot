@@ -104,8 +104,6 @@ class RobotCommandExecutor:
         print(f"[Follow] 机械臂 {model_id} 沿末端坐标系平移 {offset} mm，目标 PE: {target_pe}")
         return self.robot.movel_model(model_id, target_pe)
 
-
-
     def move_to_offset_destination(self, offset_pq=[15,0,0,0.0, 0.13052619222005157, 0.0, 0.9914448613738104]):
         """给定相对偏移 PQ 测试 follower 到达目标点。
         offset_pq: 工具坐标系下的增量位置和旋转四元数，前3个元素为位置增量，后4个元素为旋转四元数。

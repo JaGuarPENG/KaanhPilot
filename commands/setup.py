@@ -20,7 +20,12 @@ from planner.follower_bridge import  FollowerBridgeConfig
 from visualization.viewer_2d import Viewer2D
 from visualization.viewer_3d import Viewer3D
 from visualization.viewer_robot_origin import ViewerRobot
-from robot.kaanh_backend import KaanhRobotBackend
+from robot.kaanh_backend import (
+    DEFAULT_CONTROL_PORT,
+    DEFAULT_MONITOR_PORT,
+    DEFAULT_UDP_PORT,
+    KaanhRobotBackend,
+)
 from yolo.detector import UltralyticsPtDetector, Detector
 from yolo.labels import load_label_mapping
 from planner.follower_bridge import FollowerBridge, FollowerBridgeConfig
@@ -34,6 +39,7 @@ class RobotConnectionSettings:
     
     参数表：
     - ip: 机器人 IP 地址
+    - monitor_port: WebSocket 监控端口 (默认 5888)
     - control_port: WebSocket 控制端口 (默认 5999)
     - udp_port: UDP 端口 (默认 9998)
     - user: 登录用户名 (默认 "Engineer")
@@ -42,6 +48,7 @@ class RobotConnectionSettings:
     """
 
     ip: str
+    monitor_port: int
     control_port: int
     udp_port: int
     user: str
@@ -86,7 +93,7 @@ class RobotSetup:
         """获取机器人配置。"""
         return self._robot_config
     
-    def setup_robot(self, port: int|None) -> KaanhRobotBackend:
+    def setup_robot(self, port: int | None = None) -> KaanhRobotBackend:
         """根据配置创建并返回 KaanhRobotBackend 实例。"""
         return KaanhRobotBackend(
             str(self._robot_config.robot.ip),
@@ -99,6 +106,7 @@ class RobotSetup:
         """根据配置创建并返回 OrbbecG305Camera 实例。"""
         return OrbbecG305Camera(
             profile=self._robot_config.profile,
+            alignment_mode=self._robot_config.alignment,
             device_index=device_index,
             depth_processing=self._robot_config.depth_processing
         )
@@ -233,8 +241,9 @@ class RobotSetup:
             target_id=None,
             robot=RobotConnectionSettings(
                 ip=str(robot_data["robot_ip"]),
-                control_port=int(robot_data.get("control_port", 5999)),
-                udp_port=int(robot_data.get("udp_port", 9998)),
+                monitor_port=int(robot_data.get("monitor_port", DEFAULT_MONITOR_PORT)),
+                control_port=int(robot_data.get("control_port", DEFAULT_CONTROL_PORT)),
+                udp_port=int(robot_data.get("udp_port", DEFAULT_UDP_PORT)),
                 user=str(robot_data.get("user", "Engineer")),
                 password=str(robot_data.get("password", "")),
                 timeout_s=float(robot_data.get("timeout_s", 5.0)),
@@ -246,9 +255,9 @@ class RobotSetup:
             localization=localization,
             tracker=tracker,
             bridge=bridge,
-            model_path=config_dir/ Path(model_data.get("model_path", "model/yolov8_0728.pt")),
-            labels_path=config_dir/ Path(model_data.get("labels_path", "model/yolov8_0728.labels.yaml")),
-            model_confidence=float(model_data.get("confidence", 0.45)),
+            model_path=config_dir/ Path(model_data.get("model_path", "model/yolo_0915.pt")),
+            labels_path=config_dir/ Path(model_data.get("labels_path", "model/yolo_0915_labels.yaml")),
+            model_confidence=float(model_data.get("confidence", 0.5)),
             model_iou=float(model_data.get("iou", 0.7)),
             viewer=ViewerSettings(
                 show_robot=bool(perception_data.get("show_robot", False)),
@@ -269,5 +278,3 @@ class RobotSetup:
         if not isinstance(data, dict):
             raise ValueError(f"JSON 配置根节点必须是对象: {path}")
         return data
-
-

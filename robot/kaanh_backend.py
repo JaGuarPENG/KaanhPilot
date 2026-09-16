@@ -10,6 +10,11 @@ from robot.follower_udp_client import FollowerUdpClient
 from robot.robot_state import RobotState, parse_robot_state
 
 
+DEFAULT_MONITOR_PORT = 5888
+DEFAULT_CONTROL_PORT = 5999
+DEFAULT_UDP_PORT = 9998
+
+
 # Controller order: arm1(7), arm2(7), waist(4), head_yaw(1), head_pitch(1).
 MODEL_JOINT_COUNTS = (7, 7, 4, 1, 1)
 MODEL_JOINT_TARGET_TYPES = (
@@ -49,7 +54,13 @@ class KaanhRobotBackend:
     """
 
 
-    def __init__(self, ip, port=5999, udp_port=9998, timeout=10):
+    def __init__(
+        self,
+        ip,
+        port=DEFAULT_CONTROL_PORT,
+        udp_port=DEFAULT_UDP_PORT,
+        timeout=10,
+    ):
         self.uri = f"ws://{ip}:{port}"
         self.ws = None
         self.follower_udp = FollowerUdpClient(ip, port=udp_port)
@@ -262,13 +273,18 @@ class KaanhRobotBackend:
                 raise ValueError("movel_model 的 model_id 只能是 0（臂1）或 1（臂2）")
             targets = self._current_movel_targets()
             targets[model_id * 2] = self._joint_values(pe, 6, "pe")
-            return self._send_raw_command(self._build_movel_command(targets))
+            resp = self._send_raw_command(self._build_movel_command(targets))
+            # print (f"[MoveLModel] 响应: {resp}")
+            data = self._parse_json(resp)
+            if data.get("ret_code") == 10000: # 触发异常检查
+                raise RuntimeError(f"目标点不可达")
+            return resp
         except (TypeError, ValueError) as error:
             print(f"[MoveLModel] 参数错误: {error}")
-            return None
+            raise
         except Exception as error:
             print(f"[MoveLModel] 执行出错: {error}")
-            return None
+            raise
 
     def _current_movel_targets(self) -> list[list[float]]:
         """Read the seven controller PE groups required by an ``mvl`` command."""
@@ -423,11 +439,11 @@ class KaanhRobotBackend:
     def _send_raw_command(self, cmd_str, need_reply=True, need_check=True):
         """发送原始指令，返回原始响应 (字节)"""
         if not self.is_connected: 
-            raise RuntimeError("WebSocket未连接，无法发送指令")
+            raise RuntimeError("[backend] WebSocket未连接，无法发送指令")
         if need_check:
             self.get_robot_state()  # 每次发送指令前获取最新状态，更新 error_code 和 robot_status
             if self.error_code not in (None, 0):
-                raise RuntimeError(f"机器人存在错误，错误码={self.error_code}，状态={self.robot_status}")
+                raise RuntimeError(f"[backend] 机器人存在错误，错误码={self.error_code}，状态={self.robot_status}")
             self._drain_empty_acks()  # 清空可能存在的空ACK，避免干扰后续指令
         try:
             payload = cmd_str.encode('utf-8')
@@ -437,11 +453,20 @@ class KaanhRobotBackend:
                 return None
             # 阻塞等待接收
             return self._recv_payload()
+            # resp = self._recv_payload()
+            # data = self._parse_json(self._recv_payload())
+            # if need_check and not self._is_status_response(data) and not self._is_empty_ack(data):
+            #     raise RuntimeError(f"[backend] 指令发送成功，但收到异常响应: {resp}")
+            # return data
+
+            
+
+
         except websocket.WebSocketTimeoutException:
-            print(f"[超时] 指令发送成功，但在 {self.timeout}秒内未收到回复 (可能动作时间过长)")
+            print(f"[backend] 指令发送成功，但在 {self.timeout}秒内未收到回复 (可能动作时间过长)")
             return None
         except Exception as e:
-            print(f"[异常] {e}")
+            print(f"[backend] 异常: {e}")
             return None
     
     def _recv_payload(self, timeout=None):
@@ -507,7 +532,7 @@ class KaanhRobotBackend:
     
     
 if __name__ == "__main__":
-    client = KaanhRobotBackend("192.168.1.10", 5888)
+    client = KaanhRobotBackend("192.168.1.10", DEFAULT_CONTROL_PORT)
     if client.connect():
         client.login("Engineer", "000000")
         time.sleep(0.5)

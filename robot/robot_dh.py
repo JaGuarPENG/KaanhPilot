@@ -77,44 +77,6 @@ def _revolute_et(axis):
     except KeyError as exc:
         raise ValueError(f"关节轴必须是单位坐标轴，收到 {axis}") from exc
 
-
-def create_ka_std7():
-    """Create the KA-Std-7 SRS seven-axis arm using standard DH parameters.
-
-    The arm is a 3-1-3 SRS structure: joints 1--3 form the shoulder,
-    joint 4 is the elbow, and joints 5--7 form the wrist.  The dimensions
-    are reconstructed from the assembly markers (metres):
-
-    * base to shoulder centre: 0.165
-    * shoulder to elbow centre: 0.293
-    * elbow to wrist centre: 0.187
-
-    ``tool`` includes the 0.1285 m offset from the wrist centre to ``tool0``
-    shown in the supplied assembly description.  Remove or replace
-    ``robot.tool`` when a different end effector/TCP is mounted.
-
-    Returns:
-        rtb.DHRobot: A seven-revolute-joint standard-DH robot.  Joint angles
-        are in radians and all distances are in metres.
-    """
-
-    # Standard DH: A_i = Rz(q_i) Tz(d_i) Tx(a_i) Rx(alpha_i).
-    # With a_i = 0, the SRS geometry is encoded by the alternating twist
-    # angles and the three offsets along the preceding joint axes.
-    links = [
-        rtb.RevoluteDH(d=0.165, a=0.0, alpha=-np.pi / 2, name="Joint1"),
-        rtb.RevoluteDH(d=0.0, a=0.0, alpha=np.pi / 2, name="Joint2"),
-        rtb.RevoluteDH(d=0.293, a=0.0, alpha=np.pi / 2, name="Joint3"),
-        rtb.RevoluteDH(d=0.0, a=0.0, alpha=-np.pi / 2, name="Joint4"),
-        rtb.RevoluteDH(d=0.187, a=0.0, alpha=-np.pi / 2, name="Joint5"),
-        rtb.RevoluteDH(d=0.0, a=0.0, alpha=np.pi / 2, name="Joint6"),
-        rtb.RevoluteDH(d=0.0, a=0.0, alpha=0.0, name="Joint7"),
-    ]
-
-    robot = rtb.DHRobot(links, name="kaanh_std7")
-    robot.tool = SE3.Tz(0.1285)
-    return robot
-
 def create_ka_ur():
     mm = 0.001
     

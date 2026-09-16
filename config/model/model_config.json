@@ -1,6 +1,6 @@
 ﻿{
-  "model_path": "model/yolov8_0728.pt",
-  "labels_path": "model/yolov8_0728.labels.yaml",
-  "confidence": 0.45,
+  "model_path": "model/yolo_0915.pt",
+  "labels_path": "model/yolo_0915_labels.yaml",
+  "confidence": 0.4,
   "iou": 0.7
 }

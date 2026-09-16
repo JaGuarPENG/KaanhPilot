@@ -7,8 +7,13 @@ import matplotlib.pyplot as plt
 
 # 导入模块 (确保路径正确)
 from robot.robot_dh import create_ka_ur, create_humaniod_robot
-from robot.kaanh_backend import KaanhRobotBackend
+from robot.kaanh_backend import (
+    DEFAULT_CONTROL_PORT,
+    DEFAULT_MONITOR_PORT,
+    KaanhRobotBackend,
+)
 from commands.robot_commands import RobotCommandExecutor
+from commands.hand_commands import GraspCommand
 from robot.robot_state import RobotState
 
 # 全局变量
@@ -22,9 +27,9 @@ cmd_queue = queue.Queue()
 # ROBOT_IP = "192.168.110.77"  # 请根据实际情况修改为机器人的IP地址
 
 ROBOT_IP = "192.168.100.99"  # 请根据实际情况修改为机器人的IP地址
-PORT_MONITOR = 5888  # 监听端口
+PORT_MONITOR = DEFAULT_MONITOR_PORT  # 监听端口
 UDP_PORT = 9998  # UDP端口
-PORT_CONTROL = 5999  # 控制端口
+PORT_CONTROL = DEFAULT_CONTROL_PORT  # 控制端口
 
 send_freq = 125
 
@@ -87,12 +92,13 @@ def control_thread_func():
         time.sleep(0.5)
         robot.manual_enable()
         print("[控制线程] 准备就绪，等待按键指令...")
-        robot.set_pgm_vel(20)  # 设置程序速度为 50%
-        robot.set_jog_vel(30)  # 设置JOG速度为 50%
-        print("[控制线程] 速度设置为 50%")
+        robot.set_pgm_vel(70)  # 设置程序速度为 70%
+        robot.set_jog_vel(70)  # 设置JOG速度为 70%
+        print("[控制线程] 速度设置为 70%")
         robot.set_jog_coordinate()  # 设置JOG坐标系为工具
         print("[控制线程] JOG坐标系设置为工具")
         executor = RobotCommandExecutor(robot)
+        grasp_executor = GraspCommand(robot)
 
         while shared_data["running"]:
             try:
@@ -105,28 +111,23 @@ def control_thread_func():
                     print(f"<<< [结束] MoveJ 完成.")
 
                 elif cmd['type'] == 'hand_enable':
-                    print(f">>> [开始] 灵巧手使能...")
-                    robot.hand_en(15)
-                    print(f"<<< [结束] 灵巧手使能完成.")
-                
-                elif cmd['type'] == 'hand_return_to_zero':
-                    print(f">>> [开始] 灵巧手回零位...")
-                    robot.hand_home(15)
-                    print(f"<<< [结束] 灵巧手回零位完成.")
+                    print(f">>> [开始] 灵巧手重置...")
+                    grasp_executor.reinitialize(15)
+                    print(f"<<< [结束] 灵巧手重置完成.")
 
                 elif cmd['type'] == 'hand_prepare':
                     print(f">>> [开始] 灵巧手预备位...")
-                    robot.hand_move(15,6000,0,0,0,0,0,1000,1000)
+                    grasp_executor.prepare(15)
                     print(f"<<< [结束] 灵巧手预备位完成.")
                 
                 elif cmd['type'] == 'hand_grasp':
                     print(f">>> [开始] 灵巧手抓取...")
-                    robot.hand_move(15,6000,5800,6000,6000,6000,6000,1000,1000)
+                    grasp_executor.grasp(15)
                     print(f"<<< [结束] 灵巧手抓取完成.")
 
                 elif cmd['type'] == 'hand_release':
                     print(f">>> [开始] 灵巧手松开...")
-                    robot.hand_move(15,0,0,0,0,0,0,1000,1000)
+                    grasp_executor.release(15)
                     print(f"<<< [结束] 灵巧手松开完成.")
 
                 elif cmd['type'] == 'backward':
@@ -140,7 +141,7 @@ def control_thread_func():
                     print(f"<<< [结束] 灵巧手放置完成.")
 
                 elif cmd['type'] == 'placeing':
-                    print(f">>> [开始] 灵巧手后退...")
+                    print(f">>> [开始] 灵巧手放置中...")
                     executor.move_arm_by_tool_offset(0,[15,0,150])
                     print(f"<<< [结束] 灵巧手后退完成.")
 
@@ -180,7 +181,7 @@ def on_key_press(event):
     
     elif event.key == '3':
         print("\n[Key] 3 -> 灵巧手回零位")
-        cmd_queue.put({'type': 'hand_return_to_zero'})
+        cmd_queue.put({'type': 'hand_enable'})
 
     elif event.key == '4':
         print("\n[Key] 4 -> 灵巧手预备位")

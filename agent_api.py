@@ -4,16 +4,25 @@ import argparse
 import copy
 import hmac
 import json
+from logging import config
 import os
 from pathlib import Path
 import threading
 import time
+import numpy as np
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from robot.kaanh_backend import KaanhRobotBackend
+from robot.kaanh_backend import DEFAULT_CONTROL_PORT, KaanhRobotBackend
 from commands.robot_commands import RobotCommandExecutor
-from commands.snapshot_pick_command import SnapshotPickCommand
+from commands.setup import RobotSetup
+# from commands.snapshot_pick_command import SnapshotPickCommand
+from commands.snapshot import SnapShotCommand
+from perception.roi_localizer import RoiPointCloudLocalizer
 from robot.agv_backend import AGVBackend
+from commands.hand_commands import GraspCommand
+from planner.pose import calculate_pq_delta, quaternion_to_rotation
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config"
 
 
 class Runtime:
@@ -24,30 +33,85 @@ class Runtime:
         self.robot = None
         # 如果确定控制机器人再加入依赖
         if not dry_run:
-            self.robot = KaanhRobotBackend("192.168.100.99", 5888, 9998, 10)
-            if not self.robot.connect():
-                raise RuntimeError('Robot connection failed')
+            # self.robot = KaanhRobotBackend(
+            #     "192.168.100.99", DEFAULT_CONTROL_PORT, 9998, 10
+            # )
+            # if not self.robot.connect():
+            #     raise RuntimeError('Robot connection failed')
             # 沿用原键盘控制线程的初始化顺序：登录 → 等待 → 手动使能 → 设置速度
             # 启动到这里就会使能设备，并非点击卡片后才使能
-            self.robot.login("Engineer", "000000")
-            time.sleep(.5)
-            self.robot.manual_enable()
-            # 初始程序设置
-            self.robot.set_pgm_vel(50)
-            self.robot.set_jog_vel(50)
-            self.robot.set_jog_coordinate()
+            # self.robot.login("Engineer", "000000")
+            # time.sleep(.5)
+            # self.robot.manual_enable()
+            # # 初始程序设置
+            # self.robot.set_pgm_vel(50)
+            # self.robot.set_jog_vel(50)
+            # self.robot.set_jog_coordinate()
+            # self.agv = AGVBackend(
+            #     ip="192.168.110.93",
+            #     port=9201,
+            #     device_id=1,
+            #     timeout=3)
+            # if not self.agv.connect():
+            #     raise RuntimeError('AGV connection failed')
+            # # 将已连接的后端交给原动作执行器，不复制或重写关节运动逻辑
+            # self.robot_executor = RobotCommandExecutor(self.robot)
+
+            self.second_photo_offset = [0, 0, 0]  # 第二次拍照的偏移量，单位 mm
+            self.grasp_offset = [0, 0, 0]  # 抓取点的偏移量，单位 mm
+            self.z_offset = [0, 0, 0]  # 往前移动准备抓取的偏移量，单位 mm
+
+            setup = RobotSetup(DEFAULT_CONFIG_PATH)
+            self.config = setup.get_robot_config()
+            self.robot = setup.setup_robot(5999)
+            self.camera = setup.setup_camera(0)
+            self.detector = setup.setup_detector()
+            self.localizer = RoiPointCloudLocalizer(
+                self.config.localization,
+                collect_inspection=True,
+            )
+            self.camera_transform = setup.setup_camera_transform()
+            self.camera.start()
+            time.sleep(self.config.camera_warmup_seconds)
+            self.snapshot_executor = SnapShotCommand(
+                robot=self.robot,
+                camera=self.camera,
+                detector=self.detector,
+                localizer=self.localizer,
+                camera_transform=self.camera_transform,
+                tracker_config=self.config.tracker,
+                show_yolo_result=True,
+                show_point_cloud_result=True,
+                is_save=True
+            )
+            self.robot_executor = RobotCommandExecutor(self.robot)
+            # self.grasp_executor = GraspCommand(self.robot)
             self.agv = AGVBackend(
                 ip="192.168.110.93",
                 port=9201,
                 device_id=1,
                 timeout=3)
-            if not self.agv.connect():
-                raise RuntimeError('AGV connection failed')
-            # 将已连接的后端交给原动作执行器，不复制或重写关节运动逻辑
-            self.robot_executor = RobotCommandExecutor(self.robot)
-            self.snapshot_executor = SnapshotPickCommand(self.robot)
+
+            if not self.robot.connect():
+                raise RuntimeError('无法连接到机器人控制器')
+            self.robot.login(
+                str(self.config.robot.user), 
+                str(self.config.robot.password))
+            self.robot.set_jog_coordinate()
+            self.robot.manual_enable()
+            self.robot.set_pgm_vel(70)
+            self.robot.set_jog_vel(70)
+
+            # if not self.agv.connect(): 
+            #     raise RuntimeError('无法连接到AGV控制器')
+            
             self.snapshot_executor.initialize_resources()
+            # self.grasp_executor.reinitialize()
+            # self.grasp_executor.prepare()
             self.robot_executor.move_init_pose()
+            print('机器人已连接，AGV已连接，摄像头已启动，动作执行器已初始化')
+            
+
 
     # 只返回选中的方法
     # 新增物品时，在这里添加分支，并在下方添加对应 pick_xxx 方法
@@ -76,14 +140,61 @@ class Runtime:
     # 修改相应函数来执行对应动作
     def pick_water(self):
         # 矿泉水
-        self.snapshot_executor.pick("mineral_water")
-        self.agv.navigate_to(5)  # 导航到站点5，阻塞等待到站
-        self.robot_executor.move_place_pose()
-        self.robot_executor.move_arm_by_tool_offset(0,[15,0,150])
-        self.robot.hand_move(15,0,0,0,0,0,0,1000,1000)
-        self.robot_executor.move_transport_pose()
-        self.agv.navigate_to(4)  # 导航到站点5，阻塞等待到站
-        self.robot_executor.move_init_pose()
+        # self.snapshot_executor.pick("mineral_water")
+        # self.agv.navigate_to(5)  # 导航到站点5，阻塞等待到站
+        # self.robot_executor.move_place_pose()
+        # self.robot_executor.move_arm_by_tool_offset(0,[15,0,150])
+        # self.robot.hand_move(15,0,0,0,0,0,0,1000,1000)
+        # self.robot_executor.move_transport_pose()
+        # self.agv.navigate_to(4)  # 导航到站点5，阻塞等待到站
+        # self.robot_executor.move_init_pose()
+
+        #第一次拍照，判断有无物体，若有则计算第二处拍照点，随后移动到第二处拍照点，拍照，计算抓取点，抓取物体；若无则直接返回
+        #高度（x）需要按照示教位做约束，从而确保抓取以及放置的稳定性
+        rough_point = self.snapshot_executor.capture_once("mineral_water") 
+        if rough_point is None:
+            print("No target point found.")
+            return 0
+
+        print(rough_point.target_point_base_m)
+        # tcp_pq = self.robot.get_robot_state().get_model(0).tcp_pq
+        # tcp_pe = self.robot.get_robot_state().get_model(0).tcp_pe
+        # photo_offset_in_base = quaternion_to_rotation(tcp_pq[3:]) @ self.second_photo_offset
+        # photo_point_base = rough_point.target_point_base_m * 1000.0 + photo_offset_in_base
+        # photo_point_base[0] = tcp_pq[0]  # 暂时保持机器人当前的 X 坐标（高度），仅使用偏置后的目标 Y、Z。
+        #移动至机器人末端坐标系下的第二处拍照点，拍照，计算抓取点，抓取物体
+        # photo_pe = np.concatenate((photo_point_base, tcp_pe[3:])) #mm, deg
+        # self.robot.movel_model(0, photo_pe.tolist())
+        time.sleep(5)  # 等待机械臂移动到位
+
+        fine_point = self.snapshot_executor.capture_once("mineral_water")
+        if fine_point is None:
+            print("No target point found.")
+            return 0
+        print(fine_point.target_point_base_m)
+
+        # observation = self.camera.get_latest_observation()
+        # rgb_view = observation.rgb
+
+        # tcp_pq = self.robot.get_robot_state().get_model(0).tcp_pq
+        # tcp_pe = self.robot.get_robot_state().get_model(0).tcp_pe
+        # grasp_offset_in_base = quaternion_to_rotation(tuple(tcp_pq[3:])) @ self.grasp_offset
+        # grasp_point_base = fine_point.target_point_base_m * 1000.0 + grasp_offset_in_base
+        # grasp_point_base[0] = tcp_pq[0] # 暂时保持机器人当前的 X 坐标（高度），仅使用偏置后的目标 Y、Z。
+        # #移动至机器人末端坐标系下的抓取点.
+        # grasp_pe = np.concatenate((grasp_point_base, tcp_pe[3:])) #mm, deg
+        # print(f"[SingleShotExecutor] 移动到抓取位置: {grasp_pe}")
+        # # self.robot.movel_model(0, grasp_pe.tolist())
+
+        # tcp_pq = self.robot.get_robot_state().get_model(0).tcp_pq
+        # tcp_pe = self.robot.get_robot_state().get_model(0).tcp_pe
+        # z_offset_in_base = quaternion_to_rotation(tuple(tcp_pq[3:])) @ self.z_offset
+        # target_point_base = grasp_point_base + z_offset_in_base
+        # target_point_pe = np.concatenate((target_point_base * 1000.0, tcp_pe[3:])) #mm, deg
+        # print(f"[SingleShotExecutor] 移动到抓取位置: {target_point_pe}")
+        # # self.robot.movel_model(0, target_point_pe.tolist())
+
+
         return 0
 
     def pick_cola(self):
