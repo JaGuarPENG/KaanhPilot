@@ -130,10 +130,10 @@ def control_thread_func():
                     grasp_executor.release(15)
                     print(f"<<< [结束] 灵巧手松开完成.")
 
-                elif cmd['type'] == 'backward':
-                    print(f">>> [开始] 灵巧手后退...")
-                    executor.move_arm_by_tool_offset(0,[10,0,-80])
-                    print(f"<<< [结束] 灵巧手后退完成.")
+                elif cmd['type'] == 'transport_pose':
+                    print(f">>> [开始] 运输位...")
+                    executor.move_transport_pose()
+                    print(f"<<< [结束] 运输位完成.")
 
                 elif cmd['type'] == 'place_pose':
                     print(f">>> [开始] 灵巧手放置...")
@@ -142,13 +142,13 @@ def control_thread_func():
 
                 elif cmd['type'] == 'placeing':
                     print(f">>> [开始] 灵巧手放置中...")
-                    executor.move_arm_by_tool_offset(0,[15,0,150])
+                    executor.move_arm_by_tool_offset(0,[35.5,0,0])
                     print(f"<<< [结束] 灵巧手后退完成.")
 
-                elif cmd['type'] == 'backward':
-                    print(f">>> [开始] 灵巧手后退...")
-                    executor.move_arm_by_tool_offset(0,[10,0,-80])
-                    print(f"<<< [结束] 灵巧手后退完成.")
+                # elif cmd['type'] == 'backward':
+                #     print(f">>> [开始] 灵巧手后退...")
+                #     executor.move_arm_by_tool_offset(0,[10,0,-80])
+                #     print(f"<<< [结束] 灵巧手后退完成.")
             
                 elif cmd['type'] == 'exit':
                     print("[控制线程] 收到退出指令，结束控制线程.")
@@ -196,15 +196,15 @@ def on_key_press(event):
         cmd_queue.put({'type': 'hand_release'})
 
     elif event.key == '7':
-        print("\n[Key] 7 -> 灵巧手后退")
-        cmd_queue.put({'type': 'backward'})
+        print("\n[Key] 7 -> 运输位置")
+        cmd_queue.put({'type': 'transport_pose'})
 
     elif event.key == '8':
-        print("\n[Key] 8 -> 灵巧手放置")
+        print("\n[Key] 8 -> 放置位置")
         cmd_queue.put({'type': 'place_pose'})
 
     elif event.key == '9':
-        print("\n[Key] 9 -> 灵巧手放置中")
+        print("\n[Key] 9 -> 放下")
         cmd_queue.put({'type': 'placeing'})
 
     elif event.key.lower() == 'q':
@@ -249,6 +249,9 @@ def main():
     print("   [4] : 灵巧手预备位")
     print("   [5] : 灵巧手抓取")
     print("   [6] : 灵巧手松开")
+    print("   [7] : 运输位置")
+    print("   [8] : 放置位置")
+    print("   [9] : 放下")
     print("   [Q] : 退出")
     print("="*60)
 

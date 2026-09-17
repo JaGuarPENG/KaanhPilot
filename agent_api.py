@@ -163,17 +163,51 @@ class Runtime:
     # 修改相应函数来执行对应动作
     def pick_water(self):
         # 矿泉水
-        self.two_stage_pick_workflow.execute(0, "mineral_water")
+        ret = self.two_stage_pick_workflow.execute(0, "mineral_water")
+        if ret != 0:
+            print(f"[抓取] 矿泉水抓取失败，返回码 {ret}。")
+            return 0
+        self.robot_executor.move_transport_pose()
+        self.agv.navigate_to(5)
+        self.robot_executor.move_place_pose()
+        self.robot_executor.move_arm_by_tool_offset(0,[35.5,0,0])
+        self.hand_executor.release(15)
+        self.robot_executor.move_transport_pose()
+        self.agv.navigate_to(4)
+        self.robot_executor.move_init_pose()
+
         return 0
 
     def pick_cola(self):
         # 可乐
-        self.two_stage_pick_workflow.execute(0, "coco_cola")
+        ret = self.two_stage_pick_workflow.execute(0, "coco_cola")
+        if ret != 0:
+            print(f"[抓取] 可乐抓取失败，返回码 {ret}。")
+            return 0
+        self.robot_executor.move_transport_pose()
+        self.agv.navigate_to(5)
+        self.robot_executor.move_place_pose()
+        self.robot_executor.move_arm_by_tool_offset(0,[35.5,0,0])
+        self.hand_executor.release(15)
+        self.robot_executor.move_transport_pose()
+        self.agv.navigate_to(4)
+        self.robot_executor.move_init_pose()
         return 0
 
     def pick_oolong_tea(self):
         # 乌龙茶
-        self.two_stage_pick_workflow.execute(0, "oolong_tea")
+        ret = self.two_stage_pick_workflow.execute(0, "oolong_tea")
+        if ret != 0:
+            print(f"[抓取] 乌龙茶抓取失败，返回码 {ret}。")
+            return 0
+        self.robot_executor.move_transport_pose()
+        self.agv.navigate_to(5)
+        self.robot_executor.move_place_pose()
+        self.robot_executor.move_arm_by_tool_offset(0,[35.5,0,0])
+        self.hand_executor.release(15)
+        self.robot_executor.move_transport_pose()
+        self.agv.navigate_to(4)
+        self.robot_executor.move_init_pose()
         return 0
 
     def pick_potato_chips(self):

@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
+import logging
 import threading
+import time
 from typing import Any
 
 import cv2
@@ -29,6 +31,18 @@ from camera.contracts.cam_structs import (
 )
 from camera.adapters.orbbec.filters import OrbbecDepthFilterChain
 from camera.adapters.orbbec.profiles import G305_1280X800_30, G305_848X480_30, G305_SUPPORTED_PROFILES
+
+
+_LOGGER = logging.getLogger(__name__)
+
+_RECOVERING_AFTER_S = 5.0
+_REBUILD_AFTER_S = 10.0
+_MAX_REBUILD_ATTEMPTS = 3
+_REBUILD_BACKOFF_S = (0.0, 1.0, 2.0)
+_RECOVERY_STABLE_FRAME_COUNT = 3
+_REBUILD_FIRST_FRAME_TIMEOUT_S = 10.0
+_STARTUP_WAIT_GRACE_S = 0.5
+_THREAD_STOP_TIMEOUT_S = 15.0
 
 
 class OrbbecG305Camera(Camera):
@@ -158,7 +172,7 @@ class OrbbecG305Camera(Camera):
         with self._lock:
             if self._state == CameraState.CLOSED:
                 raise CameraStateError("相机已关闭，不能再次启动")
-            if self._state in (CameraState.STARTING, CameraState.STREAMING):
+            if self._state in (CameraState.STARTING, CameraState.STREAMING, CameraState.RECOVERING):
                 raise CameraStateError("相机已经启动")
             if self._state == CameraState.FAILED:
                 raise CameraStateError("相机已失败，请创建新实例而非自动重连")
@@ -174,7 +188,9 @@ class OrbbecG305Camera(Camera):
             self._stream_thread = threading.Thread(target=self._stream_main, name="orbbec-g305-camera", daemon=True)
             self._stream_thread.start()
 
-        if not self._ready_event.wait(self._startup_timeout_s):
+        # 后台线程按 frame_timeout_ms 分段等待，允许最后一次等待完整返回后再报告启动结果。
+        startup_wait_s = self._startup_timeout_s + self._frame_timeout_ms / 1000.0 + _STARTUP_WAIT_GRACE_S
+        if not self._ready_event.wait(startup_wait_s):
             self.stop()
             raise CameraTimeoutError(f"相机在 {self._startup_timeout_s:.1f} 秒内未发布首帧")
         with self._lock:
@@ -189,10 +205,10 @@ class OrbbecG305Camera(Camera):
             thread = self._stream_thread
             self._stop_event.set()
         if thread is not None and thread is not threading.current_thread():
-            # wait_for_frames 最多阻塞 frame_timeout_ms，因此这里留出少量清理余量。
-            thread.join(self._frame_timeout_ms / 1000.0 + 2.0)
+            # 除 wait_for_frames 外，SDK 停止 Color/Depth 流也可能需要数秒。
+            thread.join(max(self._frame_timeout_ms / 1000.0 + 2.0, _THREAD_STOP_TIMEOUT_S))
         with self._lock:
-            if self._state not in (CameraState.FAILED, CameraState.CLOSED):
+            if (thread is None or not thread.is_alive()) and self._state not in (CameraState.FAILED, CameraState.CLOSED):
                 self._state = CameraState.STOPPED
 
     def close(self) -> None:
@@ -221,44 +237,38 @@ class OrbbecG305Camera(Camera):
         pipeline: Any | None = None
         try:
             ob = self._load_sdk()
-            device = self._select_device(ob)
-            pipeline = self._create_pipeline(ob, device)
-            config, actual_alignment = self._build_config(ob, pipeline)
-            if actual_alignment == AlignmentMode.SOFTWARE:
-                self._align_filter = ob.AlignFilter(align_to_stream=ob.OBStreamType.COLOR_STREAM)
-            pipeline.start(config)
-
-            
-            # 官方样例要求 Pipeline 成功启动后再创建滤波器，部分 SDK 版本会在
-            # 没有活动设备上下文时拒绝构造滤波对象。
-            self._depth_filter_chain = OrbbecDepthFilterChain(ob, self._depth_processing)
-
-            # 标定要求 Pipeline 已启动并至少接收到一套完整帧。
-            frames = self._wait_complete_frames(pipeline, ob, actual_alignment)
-            calibration = self._read_calibration(pipeline)
-            raw_observation, observation = self._make_observations(frames, ob, actual_alignment, calibration)
-            with self._lock:
-                self._actual_profile = self._requested_profile
-                self._actual_alignment = actual_alignment
-                self._calibration = calibration
-                self._latest_observation = observation
-                self._latest_unfiltered_observation = raw_observation
-                self._state = CameraState.STREAMING
-                self._ready_event.set()
+            pipeline, actual_alignment = self._open_pipeline_session(ob)
+            stable_result = self._wait_for_stable_observations(
+                pipeline,
+                ob,
+                actual_alignment,
+                required_count=1,
+                timeout_s=self._startup_timeout_s,
+            )
+            if stable_result is None:
+                return
+            calibration, raw_observation, observation = stable_result
+            self._publish_streaming_observation(raw_observation, observation, actual_alignment, calibration)
+            self._ready_event.set()
 
             while not self._stop_event.is_set():
-                frames = self._wait_complete_frames(pipeline, ob, actual_alignment)
-                observation = self._make_observations(frames, ob, actual_alignment, calibration)[1]
-                if self._observation_mode == "FINAL_ONLY":
-                    with self._lock:
-                        self._latest_observation = observation
-                        self._latest_unfiltered_observation = None
-                else:
-                    raw_observation, observation = self._make_observations(frames, ob, actual_alignment, calibration)
-                    with self._lock:
-                        self._latest_observation = observation
-                        self._latest_unfiltered_observation = raw_observation
-       
+                try:
+                    self._consume_pipeline_session(pipeline, ob, actual_alignment, calibration)
+                    break
+                except CameraProfileError:
+                    raise
+                except Exception as error:
+                    if self._stop_event.is_set():
+                        break
+                    self._enter_recovering(error)
+                    self._close_pipeline_session(pipeline)
+                    pipeline = None
+
+                    recovery_result = self._rebuild_pipeline(ob, error)
+                    if recovery_result is None:
+                        break
+                    pipeline, actual_alignment, calibration = recovery_result
+
         except Exception as error:
             if not self._stop_event.is_set():
                 camera_error = error if isinstance(error, CameraError) else CameraStreamError(str(error))
@@ -268,20 +278,242 @@ class OrbbecG305Camera(Camera):
                     self._ready_event.set()
         finally:
             if pipeline is not None:
+                self._close_pipeline_session(pipeline)
+            with self._lock:
+                if self._stop_event.is_set() and self._state not in (CameraState.FAILED, CameraState.CLOSED):
+                    self._state = CameraState.STOPPED
+                elif self._state == CameraState.STARTING:
+                    self._state = CameraState.STOPPED
+                    self._ready_event.set()
+                if self._stream_thread is threading.current_thread():
+                    self._stream_thread = None
+
+    def _open_pipeline_session(self, ob: Any) -> tuple[Any, AlignmentMode]:
+        """创建并启动一套全新的 SDK Pipeline；失败时释放本次创建的资源。"""
+        pipeline: Any | None = None
+        try:
+            device = self._select_device(ob)
+            pipeline = self._create_pipeline(ob, device)
+            config, actual_alignment = self._build_config(ob, pipeline)
+            self._align_filter = None
+            if actual_alignment == AlignmentMode.SOFTWARE:
+                self._align_filter = ob.AlignFilter(align_to_stream=ob.OBStreamType.COLOR_STREAM)
+            pipeline.start(config)
+
+            # 官方样例要求 Pipeline 成功启动后再创建滤波器，部分 SDK 版本会在
+            # 没有活动设备上下文时拒绝构造滤波对象。
+            self._depth_filter_chain = OrbbecDepthFilterChain(ob, self._depth_processing)
+            return pipeline, actual_alignment
+        except Exception:
+            if pipeline is not None:
                 try:
                     pipeline.stop()
                 except Exception:
-                    # 已经进入失败状态时保留最先发生的根因，避免清理错误覆盖它。
                     pass
+            self._clear_pipeline_session_references()
+            raise
+
+    def _close_pipeline_session(self, pipeline: Any) -> None:
+        """停止一套 Pipeline 并释放只能在采集线程中持有的 SDK 对象。"""
+        try:
+            pipeline.stop()
+        except Exception as error:
+            _LOGGER.warning("停止 G305 Pipeline 时发生异常: %s", error)
+        finally:
+            self._clear_pipeline_session_references()
+
+    def _clear_pipeline_session_references(self) -> None:
+        with self._lock:
+            self._align_filter = None
+            self._depth_filter_chain = None
+            self._context = None
+
+    def _consume_pipeline_session(
+        self,
+        pipeline: Any,
+        ob: Any,
+        actual_alignment: AlignmentMode,
+        calibration: SensorCalibration,
+    ) -> None:
+        """消费当前 Pipeline，短时断流保留旧帧，恢复阶段验证连续三帧。"""
+        last_published_at = time.monotonic()
+        stable_frame_count = 0
+
+        while not self._stop_event.is_set():
+            frames = self._wait_complete_frames(pipeline, ob, actual_alignment)
+            if self._stop_event.is_set():
+                return
+            now = time.monotonic()
+
             with self._lock:
-                if self._state == CameraState.STARTING:
-                    self._state = CameraState.STOPPED
-                    self._ready_event.set()
+                recovering = self._state == CameraState.RECOVERING
+
+            if recovering and now - last_published_at >= _REBUILD_AFTER_S:
+                raise CameraTimeoutError(f"连续 {_REBUILD_AFTER_S:.0f} 秒未恢复稳定 RGB-D 帧，准备重建 Pipeline")
+
+            if frames is None:
+                stable_frame_count = 0
+                elapsed_s = now - last_published_at
+                if not recovering and elapsed_s >= _RECOVERING_AFTER_S:
+                    self._enter_recovering(
+                        CameraTimeoutError(f"连续 {_RECOVERING_AFTER_S:.0f} 秒未收到完整 RGB-D 帧")
+                    )
+                continue
+
+            raw_observation, observation = self._make_observations(frames, ob, actual_alignment, calibration)
+            if recovering:
+                stable_frame_count += 1
+                if stable_frame_count < _RECOVERY_STABLE_FRAME_COUNT:
+                    continue
+                self._publish_streaming_observation(raw_observation, observation, actual_alignment, calibration)
+                last_published_at = time.monotonic()
+                stable_frame_count = 0
+                _LOGGER.info("G305 已连续收到 %d 帧，恢复 STREAMING", _RECOVERY_STABLE_FRAME_COUNT)
+                continue
+
+            self._publish_observation(raw_observation, observation)
+            last_published_at = time.monotonic()
+
+    def _wait_for_stable_observations(
+        self,
+        pipeline: Any,
+        ob: Any,
+        actual_alignment: AlignmentMode,
+        required_count: int,
+        timeout_s: float,
+    ) -> tuple[SensorCalibration, AlignedRGBDObservation, AlignedRGBDObservation] | None:
+        """等待连续完整且可处理的观测；验证帧在达到要求前不对外发布。"""
+        deadline = time.monotonic() + timeout_s
+        calibration: SensorCalibration | None = None
+        consecutive_count = 0
+
+        while not self._stop_event.is_set() and time.monotonic() < deadline:
+            frames = self._wait_complete_frames(pipeline, ob, actual_alignment)
+            if self._stop_event.is_set():
+                return None
+            if time.monotonic() >= deadline:
+                break
+            if frames is None:
+                consecutive_count = 0
+                continue
+            if calibration is None:
+                calibration = self._read_calibration(pipeline)
+            raw_observation, observation = self._make_observations(frames, ob, actual_alignment, calibration)
+            consecutive_count += 1
+            if consecutive_count >= required_count:
+                return calibration, raw_observation, observation
+
+        if self._stop_event.is_set():
+            return None
+        raise CameraTimeoutError(
+            f"在 {timeout_s:.1f} 秒内未连续收到 {required_count} 套完整 RGB-D 帧"
+        )
+
+    def _rebuild_pipeline(
+        self,
+        ob: Any,
+        initial_error: Exception,
+    ) -> tuple[Any, AlignmentMode, SensorCalibration] | None:
+        """最多重建三次 Pipeline，连续三帧成功后才重新发布。"""
+        last_error: Exception = initial_error
+
+        for attempt_index in range(_MAX_REBUILD_ATTEMPTS):
+            backoff_s = _REBUILD_BACKOFF_S[attempt_index]
+            if backoff_s > 0 and self._stop_event.wait(backoff_s):
+                return None
+            if self._stop_event.is_set():
+                return None
+
+            pipeline: Any | None = None
+            try:
+                _LOGGER.warning(
+                    "正在重建 G305 Pipeline（第 %d/%d 次）",
+                    attempt_index + 1,
+                    _MAX_REBUILD_ATTEMPTS,
+                )
+                pipeline, actual_alignment = self._open_pipeline_session(ob)
+                stable_result = self._wait_for_stable_observations(
+                    pipeline,
+                    ob,
+                    actual_alignment,
+                    required_count=_RECOVERY_STABLE_FRAME_COUNT,
+                    timeout_s=_REBUILD_FIRST_FRAME_TIMEOUT_S,
+                )
+                if stable_result is None:
+                    self._close_pipeline_session(pipeline)
+                    return None
+                calibration, raw_observation, observation = stable_result
+                self._publish_streaming_observation(raw_observation, observation, actual_alignment, calibration)
+                _LOGGER.info("G305 Pipeline 重建成功")
+                return pipeline, actual_alignment, calibration
+            except CameraProfileError:
+                if pipeline is not None:
+                    self._close_pipeline_session(pipeline)
+                raise
+            except Exception as error:
+                last_error = error
+                if pipeline is not None:
+                    self._close_pipeline_session(pipeline)
+                _LOGGER.warning(
+                    "G305 Pipeline 第 %d/%d 次重建失败: %s",
+                    attempt_index + 1,
+                    _MAX_REBUILD_ATTEMPTS,
+                    error,
+                )
+
+        raise CameraStreamError(
+            f"G305 Pipeline 连续 {_MAX_REBUILD_ATTEMPTS} 次重建失败；最后错误: {last_error}"
+        ) from last_error
+
+    def _enter_recovering(self, error: Exception) -> None:
+        """进入恢复态并清除旧帧，防止恢复阶段继续暴露过期画面。"""
+        camera_error = error if isinstance(error, CameraError) else CameraStreamError(str(error))
+        with self._lock:
+            if self._state != CameraState.RECOVERING:
+                _LOGGER.warning("G305 进入 RECOVERING: %s", camera_error)
+            self._state = CameraState.RECOVERING
+            self._last_error = camera_error
+            self._latest_observation = None
+            self._latest_unfiltered_observation = None
+
+    def _publish_streaming_observation(
+        self,
+        raw_observation: AlignedRGBDObservation,
+        observation: AlignedRGBDObservation,
+        actual_alignment: AlignmentMode,
+        calibration: SensorCalibration,
+    ) -> None:
+        with self._lock:
+            self._actual_profile = self._requested_profile
+            self._actual_alignment = actual_alignment
+            self._calibration = calibration
+            self._last_error = None
+            self._state = CameraState.STREAMING
+            self._publish_observation_locked(raw_observation, observation)
+
+    def _publish_observation(
+        self,
+        raw_observation: AlignedRGBDObservation,
+        observation: AlignedRGBDObservation,
+    ) -> None:
+        with self._lock:
+            self._publish_observation_locked(raw_observation, observation)
+
+    def _publish_observation_locked(
+        self,
+        raw_observation: AlignedRGBDObservation,
+        observation: AlignedRGBDObservation,
+    ) -> None:
+        self._latest_observation = observation
+        self._latest_unfiltered_observation = (
+            None if self._observation_mode == "FINAL_ONLY" else raw_observation
+        )
 
     @staticmethod
     def _load_sdk() -> Any:
         try:
             import pyorbbecsdk as ob
+            ob.Context.set_logger_to_console(ob.OBLogLevel.WARNING)
         except ImportError as error:
             raise CameraStreamError("无法导入 pyorbbecsdk；请在 pyagent 环境中运行") from error
         return ob
@@ -290,9 +522,24 @@ class OrbbecG305Camera(Camera):
         context = ob.Context()
         devices = context.query_devices()
         count = devices.get_count()
-        if self._device_index >= count:
-            raise CameraNotFoundError(f"请求设备索引 {self._device_index}，但当前只检测到 {count} 台相机")
-        device = devices[self._device_index]
+        with self._lock:
+            expected_camera_id = self._camera_id
+
+        device: Any | None = None
+        if expected_camera_id is not None:
+            # 重连时按首次启动记录的序列号找回同一台设备，避免 USB 重枚举后索引改变。
+            for index in range(count):
+                candidate = devices[index]
+                if candidate.get_device_info().get_serial_number() == expected_camera_id:
+                    device = candidate
+                    break
+            if device is None:
+                raise CameraNotFoundError(f"未检测到原相机 {expected_camera_id}")
+        else:
+            if self._device_index >= count:
+                raise CameraNotFoundError(f"请求设备索引 {self._device_index}，但当前只检测到 {count} 台相机")
+            device = devices[self._device_index]
+
         device_info = device.get_device_info()
         serial_number = device_info.get_serial_number()
         if not serial_number:
@@ -367,16 +614,16 @@ class OrbbecG305Camera(Camera):
             and getattr(profile.get_format(), "name", str(profile.get_format())) == format_name
         )
 
-    def _wait_complete_frames(self, pipeline: Any, ob: Any, alignment: AlignmentMode) -> Any:
+    def _wait_complete_frames(self, pipeline: Any, ob: Any, alignment: AlignmentMode) -> Any | None:
         frames = pipeline.wait_for_frames(self._frame_timeout_ms)
         if frames is None:
-            raise CameraTimeoutError(f"在 {self._frame_timeout_ms} ms 内未收到完整 RGB-D 帧")
+            return None
         if alignment == AlignmentMode.SOFTWARE:
             if self._align_filter is None:
                 raise CameraStreamError("软件 D2C 过滤器尚未初始化")
             frames = self._align_filter.process(frames)
         if frames is None or frames.get_color_frame() is None or frames.get_depth_frame() is None:
-            raise CameraTimeoutError("收到的帧集缺少对齐后的彩色帧或深度帧")
+            return None
         return frames
 
     @staticmethod
@@ -473,4 +720,3 @@ class OrbbecG305Camera(Camera):
             raise CameraProfileError(f"请求的 Profile {self._requested_profile} 不在 G305 支持列表中")
         if self._requested_profile != G305_848X480_30 and self._requested_alignment == AlignmentMode.HARDWARE:
             raise CameraProfileError("仅有 848x480@30 的 Profile 支持硬件 D2C 对齐")
-

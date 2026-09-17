@@ -47,3 +47,17 @@
             vel=1000,
             cur=1000,
         )
+
+    def prepare_box(self, id=15):
+        """灵巧手准备放置"""
+        self.robot.hand_move(
+            id=id,
+            j1=6000,
+            j2=0,
+            j3=0,
+            j4=0,
+            j5=0,
+            j6=0,
+            vel=1000,
+            cur=1000,
+        )
