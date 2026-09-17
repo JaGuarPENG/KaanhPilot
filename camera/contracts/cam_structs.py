@@ -21,11 +21,12 @@ class AlignmentMode(str, Enum):
 
 
 class CameraState(str, Enum):
-    """相机流生命周期状态。FAILED 是终止状态，不会自动重连。"""
+    """相机流生命周期状态。RECOVERING 可自动恢复，FAILED 是终止状态。"""
 
     STOPPED = "stopped"
     STARTING = "starting"
     STREAMING = "streaming"
+    RECOVERING = "recovering"
     FAILED = "failed"
     CLOSED = "closed"
 

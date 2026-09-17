@@ -1,4 +1,5 @@
-﻿import time
+﻿# 应该只负责拍照，抓取。因此主要管理灵巧手状态以及机器人移动到拍照位置、预抓取位置、最终抓取位置。其他的运输、放置等动作应该由外部调用。
+import time
 import numpy as np
 from commands.robot_commands import RobotCommandExecutor
 from commands.hand_commands import HandCommandExecutor
@@ -23,8 +24,13 @@ class TwoStagePickWorkflow:
         self.hand_executor = hand_executor
         self.snapshot_command = snapshot_command
        
-     
-    def execute(self, model_id: int, target_id: str):
+    """
+     执行两阶段抓取工作流。
+        参数：model_id (int): 机器人模型 ID，只能是 0 或 1
+                target_id (str): 目标 ID
+        返回：int: 执行结果，0 表示成功，非 0 表示失败
+    """
+    def execute(self, model_id: int, target_id: str)-> int:
         if self.robot.is_connected is False:
             raise RuntimeError("机器人未连接，请先连接机器人。")
         if model_id not in (0, 1):
@@ -34,12 +40,14 @@ class TwoStagePickWorkflow:
         if self.snapshot_command.is_initialized is False:
            raise RuntimeError("SnapShotCommand 未初始化")
         
+        self.hand_executor.reinitialize(15)
+        self.hand_executor.prepare(15)
         # 拍照定位
         target = self.snapshot_command.capture_once(target_id)
         #
         if target is None:
             print(f"[抓取] 未检测到目标 {target_id}，无法抓取。")
-            return
+            return 1
         # point = x,y,z in camera frame
         second_photo_point_mm = (
             np.asarray(target.target_point_base_m, dtype=float) * 1000.0
@@ -59,7 +67,7 @@ class TwoStagePickWorkflow:
         target_second = self.snapshot_command.capture_once(target_id)
         if target_second is None:
             print(f"[抓取] 第二次拍照未检测到目标 {target_id}，无法抓取。")
-            return
+            return 1
         # 计算预抓取位置
         pregrasp_point_mm = (
             np.asarray(target_second.target_point_base_m, dtype=float) * 1000.0
@@ -80,12 +88,13 @@ class TwoStagePickWorkflow:
         self.robot_executor.move_arm_by_tool_offset(model_id, FINAL_APPROACH_OFFSET_TOOL_MM)
         self.hand_executor.grasp(15)
         # 临时动作编排，用来测试
-        time.sleep(3)
-        self.robot_executor.move_arm_by_tool_offset(model_id, [-50, 0, 0])
-        self.robot_executor.move_arm_by_tool_offset(model_id, [0, 0, -250])
-        self.robot_executor.move_arm_by_tool_offset(model_id, [0, 0, 250])
-        self.robot_executor.move_arm_by_tool_offset(model_id, [55, 0, 0])
-        self.hand_executor.release(15)
-        self.robot_executor.move_arm_by_tool_offset(model_id, [0, 0, -250])
-        self.robot_executor.move_init_pose()
+        time.sleep(0.5)
+        self.robot_executor.move_arm_by_tool_offset(model_id, [-50, 0,-250])
+        # self.robot_executor.move_arm_by_tool_offset(model_id, [0, 0, -250])
+        # self.robot_executor.move_arm_by_tool_offset(model_id, [0, 0, 250])
+        # # self.robot_executor.move_arm_by_tool_offset(model_id, [55, 0, 0])
+        # self.hand_executor.release(15)
+        # self.robot_executor.move_arm_by_tool_offset(model_id, [0, 0, -250])
+        # self.robot_executor.move_init_pose()
+        return 0
          
