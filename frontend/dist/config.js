@@ -6,7 +6,7 @@ window.REACH_CONFIG = Object.freeze({
   // 接入真实相机后设置 demo: false；WebRTC/RTSP 需要另行适配。
   cameras: {
     head: {type:"snapshot", src:"/api/cameras/head/frame.jpg", demo:false, refreshMs:33},
-    left: {type:"image", src:"assets/camera-left.svg", demo:true},
+    left: {type:"snapshot", src:"/api/cameras/left/frame.jpg", demo:false, refreshMs:33},
     right: {type:"image", src:"assets/camera-right.svg", demo:true}
   },
   requestTimeoutMs: 8000, pollIntervalMs: 1000

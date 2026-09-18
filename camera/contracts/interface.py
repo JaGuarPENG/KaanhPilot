@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from camera.contracts.cam_structs import AlignedRGBDObservation, CameraCapabilities, CameraProfile, CameraState
+from camera.contracts.cam_structs import AlignedRGBDObservation, CameraCapabilities, CameraProfile, CameraState, RGBFrame
 
 
 class Camera(ABC):
@@ -39,6 +39,10 @@ class Camera(ABC):
     @abstractmethod
     def get_latest_observation(self) -> AlignedRGBDObservation | None:
         """获取最新不可变观测；尚未有帧时返回 None，失败时抛出异常。"""
+
+    @abstractmethod
+    def get_latest_color_frame(self) -> RGBFrame | None:
+        """获取最新RGB彩色图像，尚未有帧时返回 None，失败时抛出异常"""
 
     def __enter__(self) -> "Camera":
         self.start()

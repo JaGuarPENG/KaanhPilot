@@ -109,14 +109,14 @@
     }
     frame.querySelector(".placeholder-note").textContent = source.demo === false ? "相机画面" : "示意画面 · 非实时";
   });
-  const allCameraSources = ["head", "left", "right"].map(key => config.cameras?.[key]);
-  if (allCameraSources.every(source => source?.demo === false)) {
-    document.querySelector(".demo-label").lastChild.textContent = "相机画面";
-    document.querySelector(".camera-footnote p span").textContent = "画面由相机源提供。";
-  }
-  if (config.cameras?.head?.demo === false) {
-    document.querySelector(".demo-label").lastChild.textContent = "头部相机 · 手部示意";
-    document.querySelector(".camera-footnote p span").textContent = "头部为实时相机画面，左右手为示意画面。";
+  const cameraNames = {head:"头部", left:"左手", right:"右手"};
+  const liveViews = Object.keys(cameraNames).filter(key => config.cameras?.[key]?.demo === false);
+  const demoViews = Object.keys(cameraNames).filter(key => !liveViews.includes(key));
+  if (liveViews.length) {
+    const liveLabel = liveViews.map(key => cameraNames[key]).join("、");
+    const demoLabel = demoViews.map(key => cameraNames[key]).join("、");
+    document.querySelector(".demo-label").lastChild.textContent = liveLabel + "相机" + (demoLabel ? " · " + demoLabel + "示意" : "");
+    document.querySelector(".camera-footnote p span").textContent = liveLabel + "为实时相机画面。" + (demoLabel ? demoLabel + "为示意画面。" : "");
   }
   const terminal = new Set(["completed", "stopped", "failed"]);
   const busy = () => writing || testingStock || uncertain || Boolean(state?.active_task);
@@ -223,7 +223,7 @@
           const found = task.recognition.detected === true;
           byId("task-progress").hidden = true;
           status(found ? "矿泉水识别完成。" : "未检测到矿泉水。",
-            found ? "已完成两次拍照识别，可继续查看头部相机画面。" : "请调整商品位置或相机视角后重试。",
+            found ? "已完成两次拍照识别，可继续查看左手相机画面。" : "请调整商品位置或相机视角后重试。",
             found ? "success" : "error");
         }
         if (task.error_code === 'out_of_stock') {
@@ -250,7 +250,7 @@
       return;
     }
     status(task.phase === "checking" ? "正在确认库存。" : task.status === "running" ? "抓取进行中。" : task.status === "stopping" ? "正在等待停止确认。" : "指令已接收。",
-      state.dry_run ? "正在模拟拿取流程，头部视角可查看已连接的本机相机。" : "等待控制器完成回复。","working");
+      state.dry_run ? "正在模拟拿取流程，相机画面是否可用取决于后端连接状态。" : "等待控制器完成回复。","working");
   }
   async function sync() {
     if (syncing) return syncing;

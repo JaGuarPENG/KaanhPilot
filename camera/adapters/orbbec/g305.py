@@ -14,6 +14,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from camera.adapters.latest_capture import CapturedFrames, LatestCapture
 from camera.contracts.errors import CameraError, CameraNotFoundError, CameraProfileError, CameraStateError, CameraStreamError, CameraTimeoutError
 from camera.contracts.interface import Camera
 from camera.contracts.cam_structs import (
@@ -28,6 +29,7 @@ from camera.contracts.cam_structs import (
     FilterParameterDescriptor,
     RigidTransform,
     SensorCalibration,
+    RGBFrame,
 )
 from camera.adapters.orbbec.filters import OrbbecDepthFilterChain
 from camera.adapters.orbbec.profiles import G305_1280X800_30, G305_848X480_30, G305_SUPPORTED_PROFILES
@@ -91,6 +93,10 @@ class OrbbecG305Camera(Camera):
         self._actual_alignment: AlignmentMode | None = None
         self._calibration: SensorCalibration | None = None
         self._latest_observation: AlignedRGBDObservation | None = None
+        self._latest_color_frame: RGBFrame | None = None
+        self._color_published_at = 0.0
+        self._capture: LatestCapture | None = None
+        self._unclosed_pipeline: Any | None = None
         self._latest_unfiltered_observation: AlignedRGBDObservation | None = None
         self._last_error: CameraError | None = None
         self._stream_thread: threading.Thread | None = None
@@ -180,7 +186,7 @@ class OrbbecG305Camera(Camera):
             self._last_error = None
             self._latest_observation = None
             self._latest_unfiltered_observation = None
-            self._frame_id = 0
+            self._latest_color_frame = None
             self._ray_x = None
             self._ray_y = None
             self._stop_event.clear()
@@ -198,7 +204,7 @@ class OrbbecG305Camera(Camera):
                 raise self._last_error
 
     def stop(self) -> None:
-        """请求后台线程停止；奥比中光相机 SDK Pipeline 只由该线程创建和销毁。"""
+        """请求后台线程停止；先结束 SDK 读取线程，再释放 Pipeline。"""
         with self._lock:
             if self._state == CameraState.CLOSED:
                 return
@@ -207,6 +213,14 @@ class OrbbecG305Camera(Camera):
         if thread is not None and thread is not threading.current_thread():
             # 除 wait_for_frames 外，SDK 停止 Color/Depth 流也可能需要数秒。
             thread.join(max(self._frame_timeout_ms / 1000.0 + 2.0, _THREAD_STOP_TIMEOUT_S))
+            if thread.is_alive():
+                error = CameraTimeoutError("G305 processing thread did not stop")
+                with self._lock:
+                    self._last_error = error
+                    self._state = CameraState.FAILED
+                raise error
+        if self._unclosed_pipeline is not None:
+            self._close_pipeline_session(self._unclosed_pipeline)
         with self._lock:
             if (thread is None or not thread.is_alive()) and self._state not in (CameraState.FAILED, CameraState.CLOSED):
                 self._state = CameraState.STOPPED
@@ -221,6 +235,27 @@ class OrbbecG305Camera(Camera):
             if self._state == CameraState.FAILED and self._last_error is not None:
                 raise self._last_error
             return self._latest_observation
+
+    def get_latest_color_frame(self) -> RGBFrame | None:
+        with self._lock:
+            if self._state == CameraState.FAILED and self._last_error is not None:
+                raise self._last_error
+            if self._stop_event.is_set() or time.monotonic() - self._color_published_at >= _RECOVERING_AFTER_S:
+                return None
+            return self._latest_color_frame
+
+    def _publish_color_frame(self, frame: RGBFrame | None) -> None:
+        with self._lock:
+            if not self._stop_event.is_set():
+                self._latest_color_frame = frame
+                self._color_published_at = time.monotonic()
+
+    def _stop_capture(self) -> None:
+        if self._capture is not None:
+            self._capture.close(self._frame_timeout_ms / 1000.0 + 2.0)
+            self._capture = None
+        with self._lock:
+            self._latest_color_frame = None
 
     def get_latest_filter_comparison_observations(self) -> tuple[AlignedRGBDObservation, AlignedRGBDObservation] | None:
         """读取同一 frame_id 的（未过滤，过滤后）RGBD图像观测。"""
@@ -278,7 +313,10 @@ class OrbbecG305Camera(Camera):
                     self._ready_event.set()
         finally:
             if pipeline is not None:
-                self._close_pipeline_session(pipeline)
+                try:
+                    self._close_pipeline_session(pipeline)
+                except CameraTimeoutError:
+                    _LOGGER.exception("Capture shutdown timed out; camera remains FAILED")
             with self._lock:
                 if self._stop_event.is_set() and self._state not in (CameraState.FAILED, CameraState.CLOSED):
                     self._state = CameraState.STOPPED
@@ -303,6 +341,10 @@ class OrbbecG305Camera(Camera):
             # 官方样例要求 Pipeline 成功启动后再创建滤波器，部分 SDK 版本会在
             # 没有活动设备上下文时拒绝构造滤波对象。
             self._depth_filter_chain = OrbbecDepthFilterChain(ob, self._depth_processing)
+            self._capture = LatestCapture(
+                lambda: self._read_capture_frames(pipeline),
+                lambda frames: self._make_color_frame(frames, ob), self._publish_color_frame)
+            self._capture.start()
             return pipeline, actual_alignment
         except Exception:
             if pipeline is not None:
@@ -314,7 +356,18 @@ class OrbbecG305Camera(Camera):
             raise
 
     def _close_pipeline_session(self, pipeline: Any) -> None:
-        """停止一套 Pipeline 并释放只能在采集线程中持有的 SDK 对象。"""
+        # Never destroy a pipeline while its reader still owns it.
+        try:
+            self._stop_capture()
+        except CameraTimeoutError as error:
+            self._unclosed_pipeline = pipeline
+            with self._lock:
+                self._last_error = error
+                self._state = CameraState.FAILED
+                self._stop_event.set()
+                self._ready_event.set()
+            raise
+        self._unclosed_pipeline = None
         try:
             pipeline.stop()
         except Exception as error:
@@ -614,8 +667,26 @@ class OrbbecG305Camera(Camera):
             and getattr(profile.get_format(), "name", str(profile.get_format())) == format_name
         )
 
-    def _wait_complete_frames(self, pipeline: Any, ob: Any, alignment: AlignmentMode) -> Any | None:
+    def _read_capture_frames(self, pipeline: Any) -> Any | None:
         frames = pipeline.wait_for_frames(self._frame_timeout_ms)
+        if frames is None or frames.get_color_frame() is None or frames.get_depth_frame() is None:
+            return None
+        return frames
+
+    def _make_color_frame(self, frames: Any, ob: Any) -> RGBFrame:
+        color = frames.get_color_frame()
+        rgb = self._frame_to_rgb(color, ob)
+        timestamp = int(color.get_timestamp())
+        with self._lock:
+            self._frame_id += 1
+            frame_id = self._frame_id
+        return RGBFrame(frame_id, timestamp, rgb)
+
+    def _wait_complete_frames(self, pipeline: Any, ob: Any, alignment: AlignmentMode) -> Any | None:
+        packet = self._capture.get(self._frame_timeout_ms / 1000.0) if self._capture is not None else None
+        frames = packet.frames if packet is not None else None
+        if self._capture is None:
+            frames = self._read_capture_frames(pipeline)
         if frames is None:
             return None
         if alignment == AlignmentMode.SOFTWARE:
@@ -624,7 +695,7 @@ class OrbbecG305Camera(Camera):
             frames = self._align_filter.process(frames)
         if frames is None or frames.get_color_frame() is None or frames.get_depth_frame() is None:
             return None
-        return frames
+        return CapturedFrames(frames, packet.color) if packet is not None else frames
 
     @staticmethod
     def _read_calibration(pipeline: Any) -> SensorCalibration:
@@ -648,7 +719,9 @@ class OrbbecG305Camera(Camera):
 
     def _make_observations(self, frames: Any, ob: Any, alignment: AlignmentMode, calibration: SensorCalibration) -> tuple[AlignedRGBDObservation, AlignedRGBDObservation]:
         """从同一套对齐帧生成未过滤与过滤后观测，用于官方滤波诊断。"""
-        color_frame = frames.get_color_frame()
+        preview = frames.color if isinstance(frames, CapturedFrames) else self._make_color_frame(frames, ob)
+        if isinstance(frames, CapturedFrames):
+            frames = frames.frames
         raw_depth_frame = frames.get_depth_frame()
         if raw_depth_frame is None:
             raise CameraStreamError("帧集缺少原始深度帧")
@@ -657,23 +730,21 @@ class OrbbecG305Camera(Camera):
             filtered_depth_frame = self._depth_filter_chain.process(raw_depth_frame)
         else:
             filtered_depth_frame = raw_depth_frame
-        rgb = self._frame_to_rgb(color_frame, ob)
-        raw_depth_m = self._depth_frame_to_m(raw_depth_frame)
+        rgb = preview.rgb
         filtered_depth_m = self._depth_frame_to_m(filtered_depth_frame)
-        if raw_depth_m.shape != rgb.shape[:2] or filtered_depth_m.shape != rgb.shape[:2]:
+        if filtered_depth_m.shape != rgb.shape[:2]:
             raise CameraStreamError("D2C 后的深度图尺寸仍与 RGB 图不一致")
-        raw_point_cloud = self._build_organized_point_cloud(raw_depth_m, calibration.rgb_intrinsics)
         filtered_point_cloud = self._build_organized_point_cloud(filtered_depth_m, calibration.rgb_intrinsics)
-        timestamp = int(color_frame.get_timestamp())
-        if timestamp < 0:
-            raise CameraStreamError("相机未提供有效的硬件采集时间戳")
-        self._frame_id += 1
+        timestamp = preview.capture_timestamp_ms
+        frame_id = preview.frame_id
         if self._observation_mode == "FINAL_ONLY":
-            observation = AlignedRGBDObservation(self._frame_id, timestamp, rgb, filtered_depth_m, filtered_point_cloud, self._requested_profile, alignment, calibration, self._depth_processing)
+            observation = AlignedRGBDObservation(frame_id, timestamp, rgb, filtered_depth_m, filtered_point_cloud, self._requested_profile, alignment, calibration, self._depth_processing)
             return observation, observation
         else:
-            raw_observation = AlignedRGBDObservation(self._frame_id, timestamp, rgb, raw_depth_m, raw_point_cloud, self._requested_profile, alignment, calibration, DepthProcessingConfig())
-            filtered_observation = AlignedRGBDObservation(self._frame_id, timestamp, rgb, filtered_depth_m, filtered_point_cloud, self._requested_profile, alignment, calibration, self._depth_processing)
+            raw_depth_m = self._depth_frame_to_m(raw_depth_frame)
+            raw_point_cloud = self._build_organized_point_cloud(raw_depth_m, calibration.rgb_intrinsics)
+            raw_observation = AlignedRGBDObservation(frame_id, timestamp, rgb, raw_depth_m, raw_point_cloud, self._requested_profile, alignment, calibration, DepthProcessingConfig())
+            filtered_observation = AlignedRGBDObservation(frame_id, timestamp, rgb, filtered_depth_m, filtered_point_cloud, self._requested_profile, alignment, calibration, self._depth_processing)
             return raw_observation, filtered_observation
 
     @staticmethod

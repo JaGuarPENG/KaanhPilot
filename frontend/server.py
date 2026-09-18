@@ -326,9 +326,13 @@ def handler_for(store, allowed_hosts):
                 self.guard()
                 parsed = urlsplit(self.path)
                 path = parsed.path
-                if path == "/api/cameras/head/frame.jpg":
+                camera_routes = {
+                    "/api/cameras/head/frame.jpg": "head_camera_jpeg",
+                    "/api/cameras/left/frame.jpg": "left_camera_jpeg",
+                }
+                if path in camera_routes:
                     try:
-                        raw = store.device.head_camera_jpeg()
+                        raw = getattr(store.device, camera_routes[path])()
                     except DeviceError as error:
                         raise APIError(error.status, str(error)) from error
                     self.send_response(200)

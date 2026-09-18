@@ -1,0 +1,14 @@
+{
+    "head": {
+        "type": "realsense_d435",
+        "device_index": 0,
+        "settings_file": "d435.json",
+        "extrinsic_index": 0
+    },
+    "left": {
+        "type": "orbbec_g305",
+        "device_index": 0,
+        "settings_file": "g305.json",
+        "extrinsic_index": 1
+    }
+}

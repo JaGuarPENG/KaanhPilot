@@ -66,7 +66,7 @@ class SnapshotCandidate:
 class SnapshotPickApp:
     """管理一套常驻机器人、相机和 YOLO 资源的交互应用。"""
 
-    def __init__(self, config_path: Path = DEFAULT_CONFIG_PATH) -> None:
+    def __init__(self, config_path: Path = DEFAULT_CONFIG_PATH, *, camera_name: str = "left") -> None:
         self._setup = RobotSetup(config_path)
         self._config = self._setup.get_robot_config()
 
@@ -83,7 +83,8 @@ class SnapshotPickApp:
             self._config.robot.udp_port,
             timeout=60,
         )
-        self._camera_left_hand = self._setup.setup_camera(0)
+        self._camera_settings = self._setup.get_camera_settings(camera_name)
+        self._camera_left_hand = self._setup.setup_camera(camera_name)
         self._detector_drink = self._setup.setup_detector()
         self._localizer = RoiPointCloudLocalizer(self._config.localization, collect_inspection=True)
         self._camera_transform = self._setup.setup_camera_transform()
@@ -94,6 +95,7 @@ class SnapshotPickApp:
             localizer=self._localizer,
             camera_transform=self._camera_transform,
             tracker_config=self._config.tracker,
+            camera_extrinsic_index=self._camera_settings.extrinsic_index,
             show_point_cloud_result=True,
             show_yolo_result=True,
             is_save=False
@@ -129,7 +131,7 @@ class SnapshotPickApp:
             self._connect_control_robot()
             self._connect_monitor_robot()
             self._camera_left_hand.start()
-            time.sleep(self._config.camera_warmup_seconds)
+            time.sleep(self._camera_settings.warmup_seconds)
             first_frame = self._camera_left_hand.get_latest_observation()
             self._detector_drink.warmup(first_frame.rgb.shape[1], first_frame.rgb.shape[0])
             cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)

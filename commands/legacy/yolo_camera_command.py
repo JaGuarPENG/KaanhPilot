@@ -15,7 +15,7 @@ from commands.setup import RobotSetup
 from perception.percept_structs import TargetPerceptionResult
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_DIR = PROJECT_ROOT / "config"
 
 
@@ -46,6 +46,7 @@ class LatencyWindow:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="基于 config 目录的实时单目标 YOLO RGB-D 感知")
     parser.add_argument("--target", required=True, help="要持续处理的目标 ID，如 oolong_tea")
+    parser.add_argument("--camera", default="head", help="cameras.json 中的相机名称")
     parser.add_argument("--config-dir", type=Path, default=DEFAULT_CONFIG_DIR, help="包含 robot、camera、model、perception 等子目录的配置根目录")
     parser.add_argument("--seconds", type=float, default=0.0, help="运行秒数；0 表示持续运行至 Ctrl+C")
     parser.add_argument("--no-display", action="store_true", help="覆盖配置，禁用感知结果显示窗口")
@@ -80,11 +81,12 @@ def main() -> None:
         setup = RobotSetup(args.config_dir)
         config = setup.get_robot_config()
 
-        camera = setup.setup_camera()
+        camera_settings = setup.get_camera_settings(args.camera)
+        camera = setup.setup_camera(args.camera)
         detector = setup.setup_detector()
 
         camera.start()
-        time.sleep(config.camera_warmup_seconds)
+        time.sleep(camera_settings.warmup_seconds)
         observation = camera.get_latest_observation()
         if observation is None:
             raise RuntimeError("相机预热后没有可用于模型预热的观测")

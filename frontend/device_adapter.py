@@ -37,6 +37,9 @@ class DemoDevice:
     def head_camera_jpeg(self):
         raise DeviceError(503, '模拟模式没有真实头部相机')
 
+    def left_camera_jpeg(self):
+        raise DeviceError(503, '模拟模式没有真实左手相机')
+
     def ready(self):
         return True
 
@@ -96,11 +99,19 @@ class RealDevice:
             raise DeviceError(error.code, data.get('error','后端请求失败'), data.get('error_code')) from error
 
     def head_camera_jpeg(self):
+        return self.camera_jpeg('head')
+
+    def left_camera_jpeg(self):
+        return self.camera_jpeg('left')
+
+    def camera_jpeg(self, name):
+        if name not in ('head', 'left'):
+            raise DeviceError(404, '未知相机')
         if not self.token:
             raise DeviceError(503, '请设置 KAANH_API_TOKEN')
         from urllib.request import Request, urlopen
         from urllib.error import HTTPError, URLError
-        req = Request(self.url + '/api/v1/cameras/head/frame.jpg',
+        req = Request(self.url + f'/api/v1/cameras/{name}/frame.jpg',
                       headers={'Authorization': 'Bearer ' + self.token})
         try:
             with urlopen(req, timeout=4) as response:
@@ -111,7 +122,8 @@ class RealDevice:
                     raise DeviceError(502, '相机画面大小无效')
                 return raw
         except (HTTPError, URLError, TimeoutError, OSError) as error:
-            raise DeviceError(503, '头部相机暂不可用，请检查后端连接及相机状态') from error
+            label = {'head': '头部', 'left': '左手'}[name]
+            raise DeviceError(503, label + '相机暂不可用，请检查后端连接及相机状态') from error
 
     def ready(self):
         return self.request("/api/v1/health").get("ready") is True
