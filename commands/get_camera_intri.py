@@ -1,37 +1,39 @@
-﻿"""获取当前相机的内参，保存为 JSON 文件。目前只支持奥比中光相机。"""
+﻿"""按逻辑名称获取相机内参并保存为 JSON 文件，支持 G305 和 D435。"""
 
 from __future__ import annotations
 
 import json
+import argparse
 from pathlib import Path
 import time
 from commands.setup import RobotConfig, RobotSetup
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config"
-CAMERA_INTRINSIC_OUTPUT_PATH = DEFAULT_CONFIG_PATH / "camera" / "intri_param_cam0.json"
 
 class GetCameraIntriCommand:
     """获取相机内参的命令。"""
 
-    def __init__(self):
+    def __init__(self, camera_name: str = "head"):
         self.config_path: Path = DEFAULT_CONFIG_PATH
         self.robot_setup = RobotSetup(DEFAULT_CONFIG_PATH)
         self.robot_config: RobotConfig = self.robot_setup.get_robot_config()
-        self.camera = self.robot_setup.setup_camera(0)
+        self.camera_settings = self.robot_setup.get_camera_settings(camera_name)
+        self.camera = self.robot_setup.setup_camera(camera_name)
+        self.output_path = DEFAULT_CONFIG_PATH / "camera" / f"intri_param_cam{self.camera_settings.extrinsic_index}.json"
         
 
     
     def get_camera_intri(self) -> None:
         try:
             self.camera.start()
-            time.sleep(3)
+            time.sleep(self.camera_settings.warmup_seconds)
             print(f"预热完成")
             observation=self.camera.get_latest_observation()
-            print(f"初始化完毕，连接到相机{self.camera._device_index}。")
-            calibration = self.camera.calibration
-            if calibration is None:
+            print(f"初始化完毕，连接到相机 {self.camera.camera_id}。")
+            if observation is None:
                 raise RuntimeError("未获取到相机标定参数，无法保存内外参。")
+            calibration = observation.calibration
 
             rgb = calibration.rgb_intrinsics
             dist = calibration.rgb_distortion
@@ -61,8 +63,8 @@ class GetCameraIntriCommand:
                     "intrinsic": [float(rgb.fx), float(rgb.fy), float(rgb.cx), float(rgb.cy)],
                 },
             }
-            CAMERA_INTRINSIC_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with CAMERA_INTRINSIC_OUTPUT_PATH.open("w", encoding="utf-8") as output_file:
+            self.output_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.output_path.open("w", encoding="utf-8") as output_file:
                 json.dump(camera_parameters, output_file, indent=4, ensure_ascii=False)
                 output_file.write("\n")
 
@@ -70,7 +72,7 @@ class GetCameraIntriCommand:
             print("intrinsic:", [rgb.fx, rgb.fy, rgb.cx, rgb.cy])
             print("distortion in OpenCV order [k1, k2, p1, p2, k3]:",
                 [dist.k1, dist.k2, dist.p1, dist.p2, dist.k3])
-            print(f"相机内参已保存至: {CAMERA_INTRINSIC_OUTPUT_PATH}")
+            print(f"相机内参已保存至: {self.output_path}")
 
         except KeyboardInterrupt:
             pass
@@ -80,5 +82,7 @@ class GetCameraIntriCommand:
 
 
 if __name__ == "__main__":
-    command = GetCameraIntriCommand()
+    parser = argparse.ArgumentParser(description="获取指定相机的内参")
+    parser.add_argument("--camera", default="head", help="cameras.json 中的相机名称，如 head、wrist")
+    command = GetCameraIntriCommand(parser.parse_args().camera)
     command.get_camera_intri()

@@ -1,6 +1,7 @@
 # 调用链：前端卡片 → server.py → 本 API → 商品动作函数 → 对应动作
 """HTTP adapter for the original keyboard movej action. No camera / YOLO required."""
 import argparse
+from contextlib import ExitStack
 import copy
 import hmac
 import json
@@ -39,71 +40,73 @@ class Runtime:
     # dry_run=True为无硬件演示，False为建立真实机器人连接。
     def __init__(self, dry_run=False):
         self.dry_run = dry_run
-        self._jpeg_lock = threading.Lock()
-        self._jpeg_frame = None
-        self._jpeg_data = None
+        self.cameras = {}
+        self._jpeg_locks = {name: threading.Lock() for name in ('head', 'left')}
+        self._jpeg_cache = {}
         # 先设为 None，便于退出时判断是否需要关闭机器人连接。
         self.robot = None
         # 如果确定控制机器人再加入依赖
         if not dry_run:
-            setup = RobotSetup(DEFAULT_CONFIG_PATH)
-            self.config = setup.get_robot_config()
-            self.robot = setup.setup_robot(5999)
-            self.camera = setup.setup_camera(0)
-            self.detector = setup.setup_detector()
-            self.localizer = RoiPointCloudLocalizer(
-                self.config.localization,
-                collect_inspection=True,
-            )
-            self.camera_transform = setup.setup_camera_transform()
-            self.camera.start()
-            time.sleep(self.config.camera_warmup_seconds)
+            try:
+                setup = RobotSetup(DEFAULT_CONFIG_PATH)
+                self.config = setup.get_robot_config()
+                self.robot = setup.setup_robot(5999)
+                camera_settings = setup.get_camera_settings("left")
+                self.detector = setup.setup_detector()
+                self.localizer = RoiPointCloudLocalizer(
+                    self.config.localization,
+                    collect_inspection=True,
+                )
+                self.camera_transform = setup.setup_camera_transform()
+                self._start_cameras(setup)
 
-            self.snapshot_executor = SnapShotCommand(
-                robot=self.robot,
-                camera=self.camera,
-                detector=self.detector,
-                localizer=self.localizer,
-                camera_transform=self.camera_transform,
-                tracker_config=self.config.tracker,
-                show_yolo_result=False,
-                show_point_cloud_result=False,
-                is_save=True
-            )
-            self.robot_executor = RobotCommandExecutor(self.robot)
-            self.hand_executor = HandCommandExecutor(self.robot)
-            self.agv = AGVBackend(
-                ip="192.168.110.93",
-                port=9201,
-                device_id=1,
-                timeout=3)
-            
-            self.two_stage_pick_workflow = TwoStagePickWorkflow(
-                robot=self.robot,
-                robot_executor=self.robot_executor,
-                hand_executor=self.hand_executor,
-                snapshot_command=self.snapshot_executor
-            )
+                self.snapshot_executor = SnapShotCommand(
+                    robot=self.robot,
+                    camera=self.camera,
+                    detector=self.detector,
+                    localizer=self.localizer,
+                    camera_transform=self.camera_transform,
+                    tracker_config=self.config.tracker,
+                    camera_extrinsic_index=camera_settings.extrinsic_index,
+                    show_yolo_result=False,
+                    show_point_cloud_result=False,
+                    is_save=True
+                )
+                self.robot_executor = RobotCommandExecutor(self.robot)
+                self.hand_executor = HandCommandExecutor(self.robot)
+                # self.agv = AGVBackend(
+                #     ip="192.168.110.93",
+                #     port=9201,
+                #     device_id=1,
+                #     timeout=3)
 
-            if not self.robot.connect():
-                raise RuntimeError('无法连接到机器人控制器')
-            self.robot.login(
-                str(self.config.robot.user), 
-                str(self.config.robot.password))
-            self.robot.set_jog_coordinate()
-            self.robot.manual_enable()
-            self.robot.set_pgm_vel(70)
-            self.robot.set_jog_vel(70)
+                self.two_stage_pick_workflow = TwoStagePickWorkflow(
+                    robot=self.robot,
+                    robot_executor=self.robot_executor,
+                    hand_executor=self.hand_executor,
+                    snapshot_command=self.snapshot_executor
+                )
 
-            if not self.agv.connect(): 
-                raise RuntimeError('无法连接到AGV控制器')
-            self.snapshot_executor.initialize_resources()
-            self.hand_executor.reinitialize(15)
-            self.hand_executor.prepare(15)
-            self.robot_executor.move_init_pose()
-            print('机器人已连接，AGV已连接，摄像头已启动，动作执行器已初始化')
-            
+                if not self.robot.connect():
+                    raise RuntimeError('无法连接到机器人控制器')
+                self.robot.login(
+                    str(self.config.robot.user),
+                    str(self.config.robot.password))
+                self.robot.set_jog_coordinate()
+                self.robot.manual_enable()
+                self.robot.set_pgm_vel(70)
+                self.robot.set_jog_vel(70)
 
+                # if not self.agv.connect():
+                #     raise RuntimeError('无法连接到AGV控制器')
+                self.snapshot_executor.initialize_resources()
+                self.hand_executor.reinitialize(15)
+                self.hand_executor.prepare(15)
+                self.robot_executor.move_init_pose()
+                print('机器人已连接，AGV已连接，摄像头已启动，动作执行器已初始化')
+            except Exception:
+                self.close()
+                raise
 
     # 只返回选中的方法
     # 新增物品时，在这里添加分支，并在下方添加对应 pick_xxx 方法
@@ -142,23 +145,53 @@ class Runtime:
             for item in item_ids
         }
 
+    def _start_cameras(self, setup):
+        try:
+            for name in ('head', 'left'):
+                camera = setup.setup_camera(name)
+                self.cameras[name] = camera
+                camera.start()
+            time.sleep(max(setup.get_camera_settings(name).warmup_seconds for name in self.cameras))
+            # 识别、抓取和左手预览共享 G305，避免重复创建独占 Pipeline。
+            self.camera = self.cameras['left']
+        except Exception:
+            self.close()
+            raise
+
+    def close(self):
+        cameras, self.cameras = self.cameras, {}
+        robot, self.robot = self.robot, None
+        with ExitStack() as stack:
+            if robot is not None:
+                stack.callback(robot.close)
+            for camera in cameras.values():
+                stack.callback(camera.close)
+        self._jpeg_cache.clear()
+
     def head_camera_jpeg(self):
+        return self.camera_jpeg('head')
+
+    def left_camera_jpeg(self):
+        return self.camera_jpeg('left')
+
+    def camera_jpeg(self, name):
         if self.dry_run:
             raise RuntimeError('模拟模式没有真实相机画面')
-        # 相机发布的是只读观测；预览不调用 YOLO，也不等待动作线程。
-        with self._jpeg_lock:
-            observation = self.camera.get_latest_observation()
-            if observation is None:
+        # 预览读取独立的只读彩色帧，不等待深度处理，也不调用 YOLO。
+        with self._jpeg_locks[name]:
+            color_frame = self.cameras[name].get_latest_color_frame()
+            if color_frame is None:
                 raise RuntimeError('相机暂时没有可用画面')
-            frame = (observation.frame_id, observation.capture_timestamp_ms)
-            if frame != self._jpeg_frame:
+            frame = (color_frame.frame_id, color_frame.capture_timestamp_ms)
+            cached = self._jpeg_cache.get(name)
+            if cached is None or frame != cached[0]:
                 import cv2
-                ok, encoded = cv2.imencode('.jpg', np.ascontiguousarray(observation.rgb[..., ::-1]))
+                ok, encoded = cv2.imencode('.jpg', np.ascontiguousarray(color_frame.rgb[..., ::-1]))
                 if not ok:
                     raise RuntimeError('相机画面编码失败')
-                self._jpeg_data = encoded.tobytes()
-                self._jpeg_frame = frame
-            return self._jpeg_data
+                cached = (frame, encoded.tobytes())
+                self._jpeg_cache[name] = cached
+            return cached[1]
 
     # 修改相应函数来执行对应动作
     def pick_water(self):
@@ -369,9 +402,13 @@ def serve(manager, token, host, port):
             return True
         def do_GET(self):
             if not self.authorized(): return
-            if self.path=='/api/v1/cameras/head/frame.jpg':
+            camera_routes = {
+                '/api/v1/cameras/head/frame.jpg': 'head_camera_jpeg',
+                '/api/v1/cameras/left/frame.jpg': 'left_camera_jpeg',
+            }
+            if self.path in camera_routes:
                 try:
-                    raw = manager.runtime.head_camera_jpeg()
+                    raw = getattr(manager.runtime, camera_routes[self.path])()
                 except Exception as e:
                     return self.send(503,{'error':str(e),'error_code':'camera_unavailable'})
                 try:
@@ -441,4 +478,4 @@ if __name__=='__main__':
     except KeyboardInterrupt: pass
     finally:
         http.server_close()
-        if runtime.robot: runtime.robot.close()
+        runtime.close()

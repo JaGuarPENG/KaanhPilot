@@ -207,6 +207,27 @@ class CameraCapabilities:
     software_alignment_profiles: tuple[CameraProfile, ...]
     hardware_alignment_profiles: tuple[CameraProfile, ...]
 
+@dataclass(frozen=True)
+class RGBFrame:
+    """不包含深度信息的RGB帧，用于跳过深度处理直接输出彩色画面
+
+    参数表：
+        - frame_id: 观测帧 ID，从 1 开始递增
+        - capture_timestamp_ms: 观测采集时间戳（毫秒）
+        - rgb: 彩色图像，H x W x 3，uint8
+    """
+    frame_id: int
+    capture_timestamp_ms: int
+    rgb: NDArray[np.uint8]
+
+    def __post_init__(self) -> None:
+        if self.frame_id < 1 or self.capture_timestamp_ms < 0:
+            raise ValueError("frame_id 必须从 1 开始，采集时间戳不可为负")
+        rgb = np.array(self.rgb, dtype=np.uint8, order="C", copy=True)
+        if rgb.ndim != 3 or rgb.shape[2] != 3 or min(rgb.shape[:2]) <= 0:
+            raise ValueError("RGB 图像必须为非空 H x W x 3")
+        rgb.setflags(write=False)
+        object.__setattr__(self, "rgb", rgb)
 
 @dataclass(frozen=True, slots=True)
 class AlignedRGBDObservation:

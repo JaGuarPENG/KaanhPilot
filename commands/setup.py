@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
 
 from camera.adapters.orbbec.g305 import OrbbecG305Camera
@@ -10,6 +11,12 @@ from camera.adapters.orbbec.profiles import (
     G305_848X480_30,
     G305_848X480_60,
 )
+from camera.adapters.realsense.d435 import RealSenseD435Camera
+from camera.adapters.realsense.profiles import (
+    D435_640X480_30, D435_848X480_30, D435_848X480_60,
+    D435_1280X720_30, D435_1920X1080_30,
+)
+from camera.contracts.interface import Camera
 from camera.contracts.cam_structs import AlignmentMode, DepthProcessingConfig
 from camera.contracts.cam_structs import CameraProfile
 from perception.percept_structs import LocalizationConfig
@@ -32,6 +39,27 @@ from planner.follower_bridge import FollowerBridge, FollowerBridgeConfig
 from perception.session import TargetPerceptionSession
 from planner.camera_transform import CameraTransform, RobotCameraExtrinsic
 from planner.target_position_filter import TargetPositionFilter
+
+
+CAMERA_ADAPTERS: dict[str, type[Camera]] = {
+    "orbbec_g305": OrbbecG305Camera,
+    "realsense_d435": RealSenseD435Camera,
+}
+CAMERA_PROFILES: dict[str, dict[str, CameraProfile]] = {
+    "orbbec_g305": {
+        "1280@30": G305_1280X800_30,
+        "848@30": G305_848X480_30,
+        "848@60": G305_848X480_60,
+    },
+    "realsense_d435": {
+        "640@30": D435_640X480_30,
+        "848@30": D435_848X480_30,
+        "848@60": D435_848X480_60,
+        "1280@30": D435_1280X720_30,
+        "1920@30": D435_1920X1080_30,
+    },
+}
+CAMERA_SETTINGS_FILES = {"orbbec_g305": "g305.json", "realsense_d435": "d435.json"}
 
 @dataclass(frozen=True, slots=True)
 class RobotConnectionSettings:
@@ -65,13 +93,23 @@ class ViewerSettings:
 
 
 @dataclass(frozen=True, slots=True)
-class RobotConfig:
-    target_id: str | None
-    robot: RobotConnectionSettings
+class CameraSettings:
+    """一台逻辑相机的独立配置；设备索引与机器人外参编号互不关联。"""
+
+    camera_type: str
+    device_index: int
     profile: CameraProfile
     alignment: AlignmentMode
     depth_processing: DepthProcessingConfig
-    camera_warmup_seconds: float
+    warmup_seconds: float
+    extrinsic_index: int
+
+
+@dataclass(frozen=True, slots=True)
+class RobotConfig:
+    target_id: str | None
+    robot: RobotConnectionSettings
+    cameras: dict[str, CameraSettings]
     localization: LocalizationConfig
     tracker: TrackerConfig
     bridge: FollowerBridgeConfig
@@ -102,13 +140,22 @@ class RobotSetup:
             timeout=float(self._robot_config.robot.timeout_s)
         )
     
-    def setup_camera(self, device_index: int = 0) -> OrbbecG305Camera:
-        """根据配置创建并返回 OrbbecG305Camera 实例。"""
-        return OrbbecG305Camera(
-            profile=self._robot_config.profile,
-            alignment_mode=self._robot_config.alignment,
-            device_index=device_index,
-            depth_processing=self._robot_config.depth_processing
+    def get_camera_settings(self, camera_name: str) -> CameraSettings:
+        """按逻辑名称查询相机配置，名称不等于 SDK 设备索引。"""
+        if not isinstance(camera_name, str) or camera_name not in self._robot_config.cameras:
+            available = ", ".join(self._robot_config.cameras)
+            raise ValueError(f"未知相机名称 {camera_name!r}；可选名称: {available}")
+        return self._robot_config.cameras[camera_name]
+
+    def setup_camera(self, camera_name: str) -> Camera:
+        """创建未启动的独立适配器；同一物理相机应只创建一次并共享实例。"""
+        settings = self.get_camera_settings(camera_name)
+        adapter = CAMERA_ADAPTERS[settings.camera_type]
+        return adapter(
+            profile=settings.profile,
+            alignment_mode=settings.alignment,
+            device_index=settings.device_index,
+            depth_processing=settings.depth_processing,
         )
     
     def setup_localizer(self) -> RoiPointCloudLocalizer:
@@ -175,7 +222,7 @@ class RobotSetup:
         """读取 config 下各模块文件，并组合成统一的运行时配置。"""
         config_dir = config_dir.resolve()
         robot_data = RobotSetup._read_json(config_dir / "robot" / "robot_config.json")
-        camera_data = RobotSetup._read_json(config_dir / "camera" / "g305.json")
+        cameras = RobotSetup._load_camera_settings(config_dir / "camera")
         model_data = RobotSetup._read_json(config_dir / "model" / "model_config.json")
         perception_data = RobotSetup._read_json(config_dir / "perception" / "perception_config.json")
         calibration_data = RobotSetup._read_json(config_dir / "calibration" / "eye_to_hand_cam0.json")
@@ -183,17 +230,6 @@ class RobotSetup:
         extrinsic_data_1 = RobotSetup._read_json(config_dir / "calibration" / "eye_to_hand_cam0.json")
         extrinsic_data_2 = RobotSetup._read_json(config_dir / "calibration" / "eye_in_hand_cam1.json")
         extrinsic_data_3 = RobotSetup._read_json(config_dir / "calibration" / "eye_in_hand_cam2.json")
-
-        profiles = {
-            "1280@30": G305_1280X800_30,
-            "848@60": G305_848X480_60,
-            "848@30": G305_848X480_30,
-        }
-        profile_name = str(camera_data.get("profile", ""))
-        try:
-            profile = profiles[profile_name]
-        except KeyError as error:
-            raise ValueError(f"不支持的 G305 profile: {profile_name!r}") from error
 
         extrinsic = calibration_data.get("camera_pose_in_base")
         if not isinstance(extrinsic, dict):
@@ -210,16 +246,6 @@ class RobotSetup:
             cam_2_extrinsic=extrinsic_data_3.get("camera_pose_in_end"),
         )
 
-        depth_processing = DepthProcessingConfig(
-            temporal_enabled=bool(camera_data.get("temporal_enabled", False)),
-            spatial_enabled=bool(camera_data.get("spatial_enabled", False)),
-            hole_filling_enabled=bool(camera_data.get("hole_filling_enabled", False)),
-            spatial_magnitude=int(camera_data.get("spatial_magnitude", 1)),
-            spatial_alpha=float(camera_data.get("spatial_alpha", 0.5)),
-            hole_filling_mode=int(camera_data.get("hole_filling_mode", 1)),
-            minimum_depth_m=float(camera_data["minimum_depth_m"]),
-            maximum_depth_m=float(camera_data["maximum_depth_m"]),
-        )
         localization = LocalizationConfig(
             roi_shrink_ratio=float(perception_data.get("roi_shrink_ratio", 0.10)),
             minimum_valid_points=int(perception_data.get("minimum_valid_points", 30)),
@@ -248,10 +274,7 @@ class RobotSetup:
                 password=str(robot_data.get("password", "")),
                 timeout_s=float(robot_data.get("timeout_s", 5.0)),
             ),
-            profile=profile,
-            alignment=AlignmentMode(str(camera_data.get("alignment", AlignmentMode.AUTO.value))),
-            depth_processing=depth_processing,
-            camera_warmup_seconds=float(camera_data.get("warmup_seconds", 1.0)),
+            cameras=cameras,
             localization=localization,
             tracker=tracker,
             bridge=bridge,
@@ -266,6 +289,73 @@ class RobotSetup:
             ),
             cam_extrinsic=cam_extrinsic
         )
+
+    @staticmethod
+    def _load_camera_settings(camera_dir: Path) -> dict[str, CameraSettings]:
+        """读取名称→设备映射，再按设备型号解析相应的参数文件和 Profile 表。"""
+        camera_dir = camera_dir.resolve()
+        registry = RobotSetup._read_json(camera_dir / "cameras.json")
+        if not registry:
+            raise ValueError("cameras.json 必须至少配置一台相机")
+        cameras = {}
+        for name, entry in registry.items():
+            if not name.strip() or not isinstance(entry, dict):
+                raise ValueError(f"相机 {name!r} 的配置必须是对象，且名称不能为空")
+            camera_type = entry.get("type")
+            if not isinstance(camera_type, str) or camera_type not in CAMERA_ADAPTERS:
+                raise ValueError(f"相机 {name!r} 的类型不受支持: {camera_type!r}")
+            filename = entry.get("settings_file", CAMERA_SETTINGS_FILES[camera_type])
+            if not isinstance(filename, str) or not filename:
+                raise ValueError(f"相机 {name!r} 的 settings_file 必须为非空文件名")
+            settings_path = (camera_dir / filename).resolve()
+            if not settings_path.is_relative_to(camera_dir):
+                raise ValueError(f"相机 {name!r} 的 settings_file 必须位于 config/camera 中")
+            data = RobotSetup._read_json(settings_path)
+            profile_name = data.get("profile")
+            profiles = CAMERA_PROFILES[camera_type]
+            if not isinstance(profile_name, str) or profile_name not in profiles:
+                raise ValueError(f"相机 {name!r} 不支持 {camera_type} profile: {profile_name!r}；可选: {', '.join(profiles)}")
+            device_index = entry.get("device_index", 0)
+            extrinsic_index = entry.get("extrinsic_index")
+            if type(device_index) is not int or device_index < 0:
+                raise ValueError(f"相机 {name!r} 的 device_index 必须为非负整数")
+            if type(extrinsic_index) is not int or extrinsic_index not in (0, 1, 2):
+                raise ValueError(f"相机 {name!r} 的 extrinsic_index 必须为 0、1 或 2")
+            warmup = float(data.get("warmup_seconds", 1.0))
+            if not math.isfinite(warmup) or warmup < 0:
+                raise ValueError(f"相机 {name!r} 的 warmup_seconds 必须为有限非负数")
+            alignment = AlignmentMode(data.get("alignment", "auto"))
+            for flag in ("temporal_enabled", "spatial_enabled", "hole_filling_enabled"):
+                if type(data.get(flag, False)) is not bool:
+                    raise ValueError(f"相机 {name!r} 的 {flag} 必须为 JSON 布尔值")
+            minimum = data.get("minimum_depth_m")
+            maximum = data.get("maximum_depth_m")
+            if any(value is not None and not math.isfinite(float(value)) for value in (minimum, maximum)):
+                raise ValueError(f"相机 {name!r} 的深度阈值必须为有限数值")
+            processing = DepthProcessingConfig(
+                temporal_enabled=data.get("temporal_enabled", False),
+                spatial_enabled=data.get("spatial_enabled", False),
+                hole_filling_enabled=data.get("hole_filling_enabled", False),
+                spatial_magnitude=data.get("spatial_magnitude", 1),
+                spatial_alpha=float(data.get("spatial_alpha", 0.5)),
+                hole_filling_mode=data.get("hole_filling_mode", 1),
+                minimum_depth_m=None if minimum is None else float(minimum),
+                maximum_depth_m=None if maximum is None else float(maximum),
+            )
+            profile = profiles[profile_name]
+            if camera_type == "realsense_d435":
+                if alignment == AlignmentMode.HARDWARE:
+                    raise ValueError(f"相机 {name!r}: D435 只支持 software 或 auto 对齐")
+                if processing.hole_filling_enabled and processing.hole_filling_mode == 0:
+                    raise ValueError(f"相机 {name!r}: D435 孔洞填充模式必须选择 1 或 2")
+            elif alignment == AlignmentMode.HARDWARE and profile != G305_848X480_30:
+                raise ValueError(f"相机 {name!r}: G305 仅 848@30 支持硬件对齐")
+            cameras[name] = CameraSettings(
+                camera_type=camera_type, device_index=device_index, profile=profile,
+                alignment=alignment, depth_processing=processing, warmup_seconds=warmup,
+                extrinsic_index=extrinsic_index,
+            )
+        return cameras
 
     @staticmethod
     def _read_json(path: Path) -> dict[str, object]:

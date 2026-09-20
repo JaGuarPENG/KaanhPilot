@@ -5,6 +5,7 @@ camera.adapters.<vendor>.<module> 显式导入，避免把 SDK 依赖扩散到�
 """
 
 from camera.contracts import (
+    RGBFrame,
     AlignedRGBDObservation,
     AlignmentMode,
     Camera,
@@ -23,7 +24,7 @@ from camera.contracts import (
 )
 
 __all__ = [
-    "AlignedRGBDObservation", "AlignmentMode", "Camera", "CameraCapabilities", "CameraError",
+    "RGBFrame", "AlignedRGBDObservation", "AlignmentMode", "Camera", "CameraCapabilities", "CameraError",
     "CameraNotFoundError", "CameraProfile", "CameraProfileError", "CameraState", "CameraStateError",
     "CameraStreamError", "CameraTimeoutError", "DepthProcessingConfig", "FilterParameterDescriptor", "SensorCalibration",
 ]

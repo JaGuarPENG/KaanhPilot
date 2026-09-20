@@ -12,6 +12,9 @@ class CameraDevice(DemoDevice):
     def head_camera_jpeg(self):
         return b'\xff\xd8camera\xff\xd9'
 
+    def left_camera_jpeg(self):
+        return b'\xff\xd8left\xff\xd9'
+
 class CameraProxyTests(unittest.TestCase):
     def test_jpeg_proxy_and_unavailable_demo(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -26,9 +29,16 @@ class CameraProxyTests(unittest.TestCase):
                 with urlopen(url) as response:
                     self.assertEqual(response.headers['Content-Type'], 'image/jpeg')
                     self.assertEqual(response.read(), b'\xff\xd8camera\xff\xd9')
+                left_url = url.replace('/head/', '/left/')
+                with urlopen(left_url) as response:
+                    self.assertEqual(response.headers['Content-Type'], 'image/jpeg')
+                    self.assertEqual(response.read(), b'\xff\xd8left\xff\xd9')
                 store.device = DemoDevice()
                 with self.assertRaises(HTTPError) as caught:
                     urlopen(url)
+                self.assertEqual(caught.exception.code, 503)
+                with self.assertRaises(HTTPError) as caught:
+                    urlopen(left_url)
                 self.assertEqual(caught.exception.code, 503)
             finally:
                 http.shutdown(); http.server_close(); thread.join()

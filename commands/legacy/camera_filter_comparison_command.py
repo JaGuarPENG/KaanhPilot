@@ -17,6 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="使用 config 中的深度滤波配置进行点云对比")
     parser.add_argument("--config-dir", type=Path, default=PROJECT_ROOT / "config")
+    parser.add_argument("--camera", default="head", help="cameras.json 中的相机名称")
     parser.add_argument("--seconds", type=float, default=60.0)
     parser.add_argument("--max-field-m", type=float, default=2.0)
     parser.add_argument("--max-points", type=int, default=200_000)
@@ -31,15 +32,20 @@ def main() -> None:
     viewer = None
     try:
         setup = RobotSetup(args.config_dir)
-        camera = setup.setup_camera()
-        if not camera.depth_processing.enabled:
-            raise ValueError("请先在 config/camera/g305.json 启用至少一个深度滤波")
+        camera_settings = setup.get_camera_settings(args.camera)
+        camera = setup.setup_camera(args.camera)
+        if not camera_settings.depth_processing.enabled:
+            raise ValueError(f"请先在相机 {args.camera!r} 的参数文件中启用至少一个深度滤波")
         camera.set_observation_mode("RAW_AND_FILTERED")
         camera.start()
         viewer = FilterComparisonPointCloudViewer(args.max_field_m, args.max_points)
         deadline, last_frame_id, displayed_frames = time.monotonic() + args.seconds, 0, 0
         while time.monotonic() < deadline:
-            raw, filtered = camera.get_latest_filter_comparison_observations()
+            observations = camera.get_latest_filter_comparison_observations()
+            if observations is None:
+                time.sleep(0.005)
+                continue
+            raw, filtered = observations
             if raw.frame_id != last_frame_id:
                 last_frame_id = raw.frame_id
                 displayed_frames += 1

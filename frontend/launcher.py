@@ -1,5 +1,5 @@
 """双击入口的 Python 启动程序。只组装配置与启动原服务，不改机器人动作逻辑。"""
-"""将下方启动参数 allow-host 的 IP 地址改为本机的ip地址，在iPad上输入本机ip地址加上对应端口启动"""
+"""自动允许本机局域网地址，启动时打印 iPad 可访问的网页地址。"""
 import json
 import os
 from pathlib import Path
@@ -120,22 +120,24 @@ def main():
                 raise ValueError('backend_url 请填写机器人电脑地址，例如 http://192.168.1.50:8088')
             if not isinstance(config.get('open_browser',True),bool):
                 raise ValueError('open_browser 必须为 true 或 false')
-            ipad_addresses = []
-            if os.environ.get('KAANH_IPAD_TEST') == '1':
-                from ipad_network import detect_lan_addresses
-                ipad_addresses = detect_lan_addresses()
+            from ipad_network import detect_lan_addresses
+            try:
+                ipad_addresses = detect_lan_addresses(config.get('lan_ip', ''))
+            except RuntimeError as error:
+                ipad_addresses = []
+                print(f'局域网访问未配置：{error}。仍可在本机打开网页。', flush=True)
             check_port('0.0.0.0', port) # 用iPad启动时
             history = prepare_frontend_data(config)
             os.environ['KAANH_API_URL'] = backend_url
             os.environ['KAANH_API_TOKEN'] = token
             script = ROOT / 'server.py'
             # args = ['--mode','real','--host','127.0.0.1','--port',str(port),'--tasks-data',str(history)] # 电脑启动
-            allowed_addresses = ipad_addresses or ['192.168.110.40']
+            allowed_addresses = ipad_addresses
             args = ['--mode', 'real', '--host', '0.0.0.0', '--port', str(port), '--tasks-data', str(history)]
             for address in allowed_addresses:
                 args.extend(['--allow-host', f'{address}:{port}'])
             if ipad_addresses:
-                print('\n请在 iPad Safari 中打开以下局域网地址（Mac 和 iPad 需连接同一网络）：', flush=True)
+                print('\n请在 iPad 浏览器中打开以下局域网地址（电脑和 iPad 需连接同一网络；多网卡时选择 Wi-Fi/有线局域网对应地址）：', flush=True)
                 for address in ipad_addresses:
                     print(f'  http://{address}:{port}', flush=True)
                 print('iPad 请使用上面的地址，不要使用 127.0.0.1。\n', flush=True)

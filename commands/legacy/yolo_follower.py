@@ -6,23 +6,26 @@ from pathlib import Path
 import time
 from commands.setup import RobotConfig, RobotSetup
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config"
 
 class YoloFollowerCommand:
     """G305、YOLO、Perception 与虚拟控制器 follower 的完整测试入口。"""
 
-    def __init__(self, target):
+    def __init__(self, target, camera_name: str = "head"):
         self.config_path: Path = DEFAULT_CONFIG_PATH
         self.target = target
         self.robot_setup = RobotSetup(DEFAULT_CONFIG_PATH)
         self.robot_config: RobotConfig = self.robot_setup.get_robot_config()
+        self.camera_settings = self.robot_setup.get_camera_settings(camera_name)
+        if self.camera_settings.extrinsic_index != 0:
+            raise ValueError("legacy follower 未提供实时 TCP 位姿，仅支持 extrinsic_index=0 的眼在手外相机")
         self.robot = self.robot_setup.setup_robot()
-        self.camera = self.robot_setup.setup_camera(0)
+        self.camera = self.robot_setup.setup_camera(camera_name)
         self.detector = self.robot_setup.setup_detector()
         self.localization = self.robot_setup.setup_localizer()
         self.tracker = self.robot_setup.setup_tracker()
-        self.warmup_seconds = self.robot_config.camera_warmup_seconds
+        self.warmup_seconds = self.camera_settings.warmup_seconds
         self.bridge = self.robot_setup.setup_bridge(self.robot)
         self.session = self.robot_setup.setup_session(self.detector, self.target)
         self.cam_transform = self.robot_setup.setup_camera_transform()
@@ -43,7 +46,7 @@ class YoloFollowerCommand:
             time.sleep(self.warmup_seconds)
             print(f"预热完成")
             self.session.warmup(observation=self.camera.get_latest_observation())
-            print(f"初始化完毕，连接到相机{self.camera._device_index}。")
+            print(f"初始化完毕，连接到相机 {self.camera.camera_id}。")
             robot_viewer = self.robot_setup.start_robot_scene()
             result_viewer = self.robot_setup.start_result_viewer()
             self.bridge.start()
@@ -57,7 +60,7 @@ class YoloFollowerCommand:
                     # 眼在手外
                     transform_result = self.cam_transform.result2base(
                         result=result,
-                        cam_index=self.camera._device_index,
+                        cam_index=self.camera_settings.extrinsic_index,
                         rbt_pq=None
                     )
                     self.bridge.submit_perception(transform_result)
