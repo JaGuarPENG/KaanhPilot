@@ -42,6 +42,14 @@ MOVEL_ARM_MODEL_IDS = (0, 1)
 MOVEL_OPTIONS = "--vel=v100 --zone=z0 --pos_offset=o0 --ch=-1 --tg=2 --reinit=1"
 
 
+class RobotCommandError(RuntimeError):
+    """The controller did not complete a robot command successfully."""
+
+
+class TargetUnreachableError(RobotCommandError):
+    """An MvL command was explicitly rejected because its target is unreachable."""
+
+
 class KaanhRobotBackend:
     """Kaanh 机器人后端客户端
     
@@ -164,15 +172,9 @@ class KaanhRobotBackend:
         ``[arm1(7), arm2(7), waist(4), head_yaw(1), head_pitch(1)]``。
         控制器已支持的多模型 ``manual_mvaj`` 格式不发送速度项。
         """
-        try:
-            values = self._joint_values(joints_deg, TOTAL_JOINT_COUNT, "movej")
-            return self._send_raw_command(self._build_movej_command(values))
-        except (TypeError, ValueError) as error:
-            print(f"[MoveJ] 参数错误: {error}")
-            return None
-        except Exception as error:
-            print(f"[MoveJ] 执行出错: {error}")
-            return None
+        values = self._joint_values(joints_deg, TOTAL_JOINT_COUNT, "movej")
+        response = self._send_raw_command(self._build_movej_command(values))
+        return self._validate_command_response(response, "MoveJ")
 
     def movej_model(self, model_id: int, joints_deg: Sequence[float]):
         """移动一个控制器模型，其余模型保持读取到的实际关节角。
@@ -182,29 +184,22 @@ class KaanhRobotBackend:
         控制器报文仍包含全部五个模型目标，因此本方法会先读取完整的 20 轴
         当前目标关节角，再仅替换请求模型对应的切片。
         """
-        try:
-            if isinstance(model_id, bool) or not isinstance(model_id, int):
-                raise ValueError("model_id 必须是 0 到 4 的整数")
-            if not 0 <= model_id < len(MODEL_JOINT_COUNTS):
-                raise ValueError("model_id 必须在 0 到 4 之间")
+        if isinstance(model_id, bool) or not isinstance(model_id, int):
+            raise ValueError("model_id 必须是 0 到 4 的整数")
+        if not 0 <= model_id < len(MODEL_JOINT_COUNTS):
+            raise ValueError("model_id 必须在 0 到 4 之间")
 
-            values = self._joint_values(
-                joints_deg, MODEL_JOINT_COUNTS[model_id], "movej_model"
-            )
-            state = self.get_robot_state()
-            current = state.joints_deg
-            full_target = self._joint_values(
-                current, TOTAL_JOINT_COUNT, "当前机器人关节状态"
-            )
-            start = sum(MODEL_JOINT_COUNTS[:model_id])
-            full_target[start : start + len(values)] = values
-            return self.movej(full_target)
-        except (TypeError, ValueError) as error:
-            print(f"[MoveJModel] 参数错误: {error}")
-            return None
-        except Exception as error:
-            print(f"[MoveJModel] 执行出错: {error}")
-            return None
+        values = self._joint_values(
+            joints_deg, MODEL_JOINT_COUNTS[model_id], "movej_model"
+        )
+        state = self.get_robot_state()
+        current = state.actual_joints_deg
+        full_target = self._joint_values(
+            current, TOTAL_JOINT_COUNT, "当前机器人关节状态"
+        )
+        start = sum(MODEL_JOINT_COUNTS[:model_id])
+        full_target[start : start + len(values)] = values
+        return self.movej(full_target)
 
     @staticmethod
     def _joint_values(
@@ -249,17 +244,11 @@ class KaanhRobotBackend:
         腰部和头部，以及两臂的附属 ``EE_A`` 信息从当前控制器状态读取并
         原样回填到完整的七段 ``mvl`` 报文中。
         """
-        try:
-            targets = self._current_movel_targets()
-            targets[0] = self._joint_values(arm1_pe, 6, "arm1_pe")
-            targets[2] = self._joint_values(arm2_pe, 6, "arm2_pe")
-            return self._send_raw_command(self._build_movel_command(targets))
-        except (TypeError, ValueError) as error:
-            print(f"[MoveL] 参数错误: {error}")
-            return None
-        except Exception as error:
-            print(f"[MoveL] 执行出错: {error}")
-            return None
+        targets = self._current_movel_targets()
+        targets[0] = self._joint_values(arm1_pe, 6, "arm1_pe")
+        targets[2] = self._joint_values(arm2_pe, 6, "arm2_pe")
+        response = self._send_raw_command(self._build_movel_command(targets))
+        return self._validate_movel_response(response)
 
     def movel_model(self, model_id: int, pe: Sequence[float]):
         """移动指定手臂。
@@ -268,23 +257,48 @@ class KaanhRobotBackend:
         ``[x, y, z, a, b, c]``，位置单位 mm、姿态单位度。其他六段目标均从
         当前控制器状态保留。
         """
-        try:
-            if isinstance(model_id, bool) or model_id not in MOVEL_ARM_MODEL_IDS:
-                raise ValueError("movel_model 的 model_id 只能是 0（臂1）或 1（臂2）")
-            targets = self._current_movel_targets()
-            targets[model_id * 2] = self._joint_values(pe, 6, "pe")
-            resp = self._send_raw_command(self._build_movel_command(targets))
-            # print (f"[MoveLModel] 响应: {resp}")
-            data = self._parse_json(resp)
-            if data.get("ret_code") == 10000: # 触发异常检查
-                raise RuntimeError(f"目标点不可达")
-            return resp
-        except (TypeError, ValueError) as error:
-            print(f"[MoveLModel] 参数错误: {error}")
-            raise
-        except Exception as error:
-            print(f"[MoveLModel] 执行出错: {error}")
-            raise
+        if isinstance(model_id, bool) or model_id not in MOVEL_ARM_MODEL_IDS:
+            raise ValueError("movel_model 的 model_id 只能是 0（臂1）或 1（臂2）")
+        targets = self._current_movel_targets()
+        targets[model_id * 2] = self._joint_values(pe, 6, "pe")
+        response = self._send_raw_command(self._build_movel_command(targets))
+        return self._validate_movel_response(response)
+
+    def _validate_movel_response(self, response):
+        """Apply MvL-only controller response semantics."""
+
+        if response is None:
+            raise RobotCommandError("MvL 未收到控制器响应，执行结果不确定")
+        data = self._parse_json(response)
+        if not isinstance(data, dict):
+            raise RobotCommandError("MvL 收到无法解析的控制器响应")
+        return_code = data.get("ret_code")
+        if return_code == 10000:
+            raise TargetUnreachableError("MvL 目标点不可达")
+        if return_code != 0:
+            message = data.get("ret_msg") or "未知控制器错误"
+            raise RobotCommandError(
+                f"MvL 执行失败，ret_code={return_code}: {message}"
+            )
+        return response
+
+    def _validate_command_response(self, response, command_name: str):
+        """Validate a non-MvL command without target-unreachable semantics."""
+
+        if response is None:
+            raise RobotCommandError(
+                f"{command_name} 未收到控制器响应，执行结果不确定"
+            )
+        data = self._parse_json(response)
+        if not isinstance(data, dict):
+            raise RobotCommandError(f"{command_name} 收到无法解析的控制器响应")
+        return_code = data.get("ret_code")
+        if return_code != 0:
+            message = data.get("ret_msg") or "未知控制器错误"
+            raise RobotCommandError(
+                f"{command_name} 执行失败，ret_code={return_code}: {message}"
+            )
+        return response
 
     def _current_movel_targets(self) -> list[list[float]]:
         """Read the seven controller PE groups required by an ``mvl`` command."""
