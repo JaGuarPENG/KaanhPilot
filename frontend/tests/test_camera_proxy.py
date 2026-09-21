@@ -5,6 +5,11 @@ import unittest
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import urlopen
+
+import sys
+
+# Support direct execution and test discovery from any working directory.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from server import Store, handler_for, ThreadingHTTPServer
 from device_adapter import DemoDevice
 

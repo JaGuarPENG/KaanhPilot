@@ -2,6 +2,11 @@ import tempfile
 from pathlib import Path
 import unittest
 from unittest.mock import patch
+
+import sys
+
+# Support direct execution and test discovery from any working directory.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from server import Store, APIError
 from device_adapter import DemoDevice
 
