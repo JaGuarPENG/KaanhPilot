@@ -6,6 +6,11 @@
   const tabs = [...document.querySelectorAll('[role="tab"]')];
   const byId = id => document.getElementById(id);
   const categorySwitch = document.querySelector(".category-switch");
+  const categories = {
+    snacks: {title:"想吃点什么？", description:"选择一款零食，即可发送抓取指令。"},
+    drinks: {title:"想喝点什么？", description:"选择一款饮料，即可发送抓取指令。"},
+    coffee: {title:"来杯咖啡吧。", description:"选择喜欢的风味，开启一刻咖啡时光。"}
+  };
   const stop = byId("stop-button");
   let state = null, online = false, writing = false, uncertain = false;
   let activeCategory = "drinks", trackedTask = null, requestId = null, syncing = null;
@@ -143,13 +148,14 @@
     cards.forEach(card => {
       const item = state?.items[card.dataset.item];
       const soldOut = item?.available === 0;
+      const actionLabel = card.closest('.category-panel').dataset.category === 'coffee' ? '点击制作' : '点击抓取';
       card.disabled = locked || !online || !state?.ready || item?.available !== 1;
       card.classList.toggle('sold-out', soldOut);
-      card.setAttribute('aria-label', (item?.name || card.querySelector('.drink-name').textContent) + (soldOut ? '，已售尽' : '，点击抓取'));
+      card.setAttribute('aria-label', (item?.name || card.querySelector('.drink-name').textContent) + (soldOut ? '，已售尽' : '，' + actionLabel));
       const selected = state?.active_task?.item_id === card.dataset.item;
       card.classList.toggle("selected",selected);
       card.setAttribute("aria-pressed",String(selected));
-      card.querySelector(".card-action").innerHTML = soldOut ? "已售尽" : '点击抓取 <span class="arrow" aria-hidden="true">↗</span>';
+      card.querySelector(".card-action").innerHTML = soldOut ? "已售尽" : actionLabel + ' <span class="arrow" aria-hidden="true">↗</span>';
     });
     byId('inventory-test').hidden = !online || state?.dry_run !== true;
     byId('inventory-test-form').querySelectorAll('select, button').forEach(el => {el.disabled = locked || !online;});
@@ -168,18 +174,21 @@
     }
   }
   function setCategory(category, resetStatus = true) {
-    if (busy() || category === activeCategory) return;
+    if (busy() || !categories[category] || category === activeCategory) return;
     activeCategory = category;
     categorySwitch.dataset.category = category;
-    tabs.forEach(tab => {
+    const activeIndex = tabs.findIndex(tab => tab.dataset.category === category);
+    tabs.forEach((tab, index) => {
       const selected = tab.dataset.category === category;
+      const offset = (index - activeIndex + tabs.length) % tabs.length;
+      tab.dataset.position = offset === 0 ? 'center' : offset === 1 ? 'right' : 'left';
       tab.setAttribute("aria-selected",String(selected));
       tab.tabIndex = selected ? 0 : -1;
     });
     grids.forEach(panel => {panel.hidden = panel.dataset.category !== category;});
-    byId("page-title").textContent = category === "drinks" ? "想喝点什么？" : "想吃点什么？";
-    byId("category-description").textContent = "选择一款" + (category === "drinks" ? "饮料" : "零食") + "，即可发送抓取指令。";
-    if (resetStatus && online && state.ready) {step(0);status("准备好，为你取来。","选择喜欢的饮料或零食。");}
+    byId("page-title").textContent = categories[category].title;
+    byId("category-description").textContent = categories[category].description;
+    if (resetStatus && online && state.ready) {step(0);status("准备好，为你取来。","选择喜欢的零食、饮料或咖啡。");}
   }
   async function api(path, body) {
     const controller = new AbortController();
@@ -271,7 +280,7 @@
             accept(await api(config.statusPath));
             if (state.active_task) showTask(state.active_task); else showTask(task);
           } else if (!uncertain && !state.ready) status("设备暂未就绪。","请检查服务、设备适配器和安全联锁。","error");
-          else if (!uncertain && ["正在连接设备服务。", "设备暂未就绪。"].includes(byId("status-title").textContent)) status("准备好，为你取来。","选择喜欢的饮料或零食。");
+          else if (!uncertain && ["正在连接设备服务。", "设备暂未就绪。"].includes(byId("status-title").textContent)) status("准备好，为你取来。","选择喜欢的零食、饮料或咖啡。");
         }
       } catch {
         online = false;
@@ -361,6 +370,47 @@
     finally {writing = false;await sync();render();}
   });
   cards.forEach(card => card.addEventListener("click",() => grab(card.dataset.item)));
+  let drag = null, suppressClickUntil = 0;
+  categorySwitch.addEventListener('pointerdown', event => {
+    if (busy() || !event.isPrimary || event.button !== 0) return;
+    drag = {id:event.pointerId, x:event.clientX, y:event.clientY, dx:0, horizontal:false};
+  });
+  categorySwitch.addEventListener('pointermove', event => {
+    if (!drag || event.pointerId !== drag.id) return;
+    const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+    if (!drag.horizontal && Math.abs(dy) > Math.max(10, Math.abs(dx))) {drag = null; return;}
+    if (!drag.horizontal && Math.abs(dx) > 8) {
+      drag.horizontal = true;
+      categorySwitch.setPointerCapture(event.pointerId);
+      categorySwitch.classList.add('is-dragging');
+    }
+    if (drag.horizontal) {
+      drag.dx = dx;
+      categorySwitch.style.setProperty('--drag', Math.max(-50, Math.min(50, dx)) + 'px');
+    }
+  });
+  function finishDrag(event) {
+    // Touch starts with implicit capture on the tab; transferring it to the
+    // wheel also emits lostpointercapture on that child, not a cancelled drag.
+    if (event.type === 'lostpointercapture' && event.target !== categorySwitch) return;
+    if (!drag || event.pointerId !== drag.id) return;
+    const gesture = drag;
+    drag = null;
+    categorySwitch.classList.remove('is-dragging');
+    categorySwitch.style.removeProperty('--drag');
+    if (gesture.horizontal) suppressClickUntil = performance.now() + 350;
+    if (event.type === 'pointerup' && Math.abs(gesture.dx) >= 30 && !busy()) {
+      const index = tabs.findIndex(tab => tab.dataset.category === activeCategory);
+      const target = tabs[(index + (gesture.dx < 0 ? 1 : -1) + tabs.length) % tabs.length];
+      setCategory(target.dataset.category);
+      target.focus({preventScroll:true});
+    }
+    if (categorySwitch.hasPointerCapture(event.pointerId)) categorySwitch.releasePointerCapture(event.pointerId);
+  }
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(type => categorySwitch.addEventListener(type, finishDrag));
+  categorySwitch.addEventListener('click', event => {
+    if (performance.now() < suppressClickUntil) {event.preventDefault(); event.stopImmediatePropagation();}
+  }, true);
   tabs.forEach((tab,index) => {
     tab.addEventListener("click",() => setCategory(tab.dataset.category));
     tab.addEventListener("keydown",event => {

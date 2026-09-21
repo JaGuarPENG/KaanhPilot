@@ -10,6 +10,11 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from unittest.mock import patch
 
+import sys
+
+# Support direct execution and test discovery from any working directory.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from server import APIError, Store, ThreadingHTTPServer, handler_for
 from device_adapter import DemoDevice
 from launcher import prepare_frontend_data

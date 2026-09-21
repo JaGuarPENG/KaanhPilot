@@ -12,7 +12,7 @@ import unittest
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def free_port():

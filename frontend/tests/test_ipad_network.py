@@ -1,6 +1,12 @@
 import unittest
 from unittest.mock import patch
 
+import sys
+from pathlib import Path
+
+# Support direct execution and test discovery from any working directory.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 class IPadNetworkTests(unittest.TestCase):
     def test_windows_addresses_are_validated_and_deduplicated(self):
         from ipad_network import detect_lan_addresses

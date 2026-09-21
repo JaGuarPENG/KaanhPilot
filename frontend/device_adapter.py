@@ -14,7 +14,8 @@ class DemoDevice:
 
     def __init__(self):
         self.started = {}
-        self.stock = {item:1 for item in ('water','cola','oolong_tea','potato_chips','cookies','chocolate')}
+        self.stock = {item:1 for item in ('water','cola','oolong_tea','potato_chips','cookies','chocolate',
+                                        'americano','latte','cappuccino')}
         self.confirmation = {}
         self.stock_revision = 0
         self.results = {}
@@ -71,7 +72,7 @@ class DemoDevice:
 
 
 class RealDevice:
-    """MoveJ completion feedback through robot-side HTTP API."""
+    """真实设备驱动"""
     mode = "real"
 
     def __init__(self):
