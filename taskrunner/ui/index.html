@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TaskRunner 测试台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">KAANH PILOT · LOCAL TEST</p>
+        <h1>TaskRunner 测试台</h1>
+        <p class="subtitle">真实识别 · 模拟机器人 · 无 AGV</p>
+      </div>
+      <div class="runner-state">
+        <span id="connection-dot" class="dot offline"></span>
+        <div>
+          <span class="muted">Runner</span>
+          <strong id="runner-state">连接中</strong>
+        </div>
+      </div>
+    </header>
+
+    <section id="fault-panel" class="fault-panel hidden" aria-live="assertive">
+      <strong>Runner 已停止</strong>
+      <span id="fault-message"></span>
+    </section>
+
+    <section class="panel order-entry">
+      <div>
+        <p class="section-label">新订单</p>
+        <h2>选择饮料</h2>
+      </div>
+      <div class="drink-actions">
+        <button class="drink" data-item="water">矿泉水</button>
+        <button class="drink" data-item="cola">可乐</button>
+        <button class="drink" data-item="oolong_tea">乌龙茶</button>
+      </div>
+      <div class="capacity">
+        <span>等待队列</span>
+        <strong><span id="pending-count">0</span> / <span id="queue-capacity">–</span></strong>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <article class="panel current-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-label">CURRENT ORDER</p>
+            <h2>当前订单</h2>
+          </div>
+          <span id="current-status" class="status neutral">空闲</span>
+        </div>
+        <div id="current-order" class="empty-state">
+          <div class="empty-icon">✓</div>
+          <p>没有正在执行的订单</p>
+        </div>
+      </article>
+
+      <aside class="panel queue-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-label">FIFO QUEUE</p>
+            <h2>订单队列</h2>
+          </div>
+        </div>
+        <div id="pending-orders" class="queue-list">
+          <p class="empty-copy">等待队列为空</p>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

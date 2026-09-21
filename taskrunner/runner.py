@@ -33,6 +33,8 @@ from taskrunner.taskrunner_contracts import (
     OrderSnapshot,
     OrderStatus,
     QueueSnapshot,
+    RunnerState,
+    RunnerStatusSnapshot,
     TaskStatus,
     TERMINAL_ORDER_STATUSES,
 )
@@ -185,6 +187,40 @@ class TaskRunner:
                 capacity=self._queue.capacity,
                 current_order=current,
                 pending_orders=pending,
+            )
+
+    def get_status(self) -> RunnerStatusSnapshot:
+        """返回 Runner 生命周期、接单能力和首个致命故障。
+
+        该接口不暴露可变内部对象。``RUNNING`` 表示存在当前订单或等待订单；
+        已启动且没有任何订单时为 ``IDLE``。
+        """
+
+        with self._lock:
+            if self._fatal_error is not None:
+                state = RunnerState.FAULTED
+            elif self._closed:
+                state = RunnerState.STOPPED
+            elif not self._started:
+                state = RunnerState.NOT_STARTED
+            elif self._current_order_id is not None or len(self._queue) > 0:
+                state = RunnerState.RUNNING
+            else:
+                state = RunnerState.IDLE
+
+            accepting_orders = (
+                self._started
+                and not self._closed
+                and self._fatal_error is None
+                and not self._stop_event.is_set()
+                and len(self._queue) < self._queue.capacity
+            )
+            error = self._fatal_error
+            return RunnerStatusSnapshot(
+                state=state,
+                accepting_orders=accepting_orders,
+                fatal_error_type=None if error is None else type(error).__name__,
+                fatal_error_message=None if error is None else str(error),
             )
 
     def get_order(self, order_id: str) -> OrderSnapshot:

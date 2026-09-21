@@ -10,5 +10,11 @@
         "device_index": 0,
         "settings_file": "g305.json",
         "extrinsic_index": 1
+    },
+    "right": {
+        "type": "orbbec_g305",
+        "device_index": 1,
+        "settings_file": "g305.json",
+        "extrinsic_index": 2
     }
 }

@@ -23,6 +23,16 @@ class OrderStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class RunnerState(str, Enum):
+    """TaskRunner 进程内生命周期与调度状态。"""
+
+    NOT_STARTED = "not_started"
+    IDLE = "idle"
+    RUNNING = "running"
+    FAULTED = "faulted"
+    STOPPED = "stopped"
+
+
 class TaskStatus(str, Enum):
     """订单内部单个机器人任务的状态。"""
 
@@ -163,3 +173,13 @@ class QueueSnapshot:
         """返回等待队列长度；当前活动订单不计入。"""
 
         return len(self.pending_orders)
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerStatusSnapshot:
+    """Runner 的只读生命周期快照，供宿主和测试界面观察。"""
+
+    state: RunnerState
+    accepting_orders: bool
+    fatal_error_type: str | None = None
+    fatal_error_message: str | None = None

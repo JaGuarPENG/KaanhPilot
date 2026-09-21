@@ -18,7 +18,7 @@ class ControllerMonitor:
     """在后台线程中持续校验控制器状态。
 
     本类不拥有控制器连接，也不负责退出进程。发现故障后只调用一次
-    ``on_fault``；连接清理和进程退出由宿主（例如 CLI）负责。
+    ``on_fault``；连接清理和进程退出由宿主负责。
     """
 
     def __init__(self, state_reader: RobotStateReader, interval_s: float = 0.02) -> None:

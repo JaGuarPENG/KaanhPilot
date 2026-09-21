@@ -17,6 +17,7 @@ from taskrunner.taskrunner_contracts import (
     OrderStatus,
     PauseReason,
     RobotTaskType,
+    RunnerState,
     TaskExecutionResult,
     TaskStatus,
 )
@@ -69,6 +70,41 @@ class ScriptedActions:
 
 
 class TaskRunnerTests(unittest.TestCase):
+    def test_public_runner_status_lifecycle(self) -> None:
+        actions = ScriptedActions()
+        runner = TaskRunner(actions)
+        self.assertEqual(runner.get_status().state, RunnerState.NOT_STARTED)
+        self.assertFalse(runner.get_status().accepting_orders)
+
+        runner.start()
+        self.addCleanup(self._safe_shutdown, runner)
+        self.assertEqual(runner.get_status().state, RunnerState.IDLE)
+        self.assertTrue(runner.get_status().accepting_orders)
+
+        actions.block_on = RobotTaskType.PICK
+        runner.submit_beverage("water")
+        self.assertTrue(actions.entered.wait(1.0))
+        self.assertEqual(runner.get_status().state, RunnerState.RUNNING)
+        actions.release.set()
+        wait_until(
+            lambda: runner.get_status().state is RunnerState.IDLE,
+            "Runner 完成订单后没有回到 IDLE",
+        )
+
+        runner.shutdown()
+        self.assertEqual(runner.get_status().state, RunnerState.STOPPED)
+
+    def test_public_status_preserves_fatal_error(self) -> None:
+        runner = TaskRunner(ScriptedActions())
+        runner.start()
+        self.addCleanup(self._safe_shutdown, runner)
+        runner.report_fatal(RuntimeError("controller lost"))
+        status = runner.get_status()
+        self.assertEqual(status.state, RunnerState.FAULTED)
+        self.assertFalse(status.accepting_orders)
+        self.assertEqual(status.fatal_error_type, "RuntimeError")
+        self.assertEqual(status.fatal_error_message, "controller lost")
+
     def make_runner(
         self,
         actions: ScriptedActions,

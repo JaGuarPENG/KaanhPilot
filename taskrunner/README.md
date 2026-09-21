@@ -2,336 +2,217 @@
 
 ## 1. 模块用途
 
-TaskRunner 是一个**仅保存在内存中的机器人饮料订单调度器**。它维护一个
-全局 FIFO 等待队列，并使用唯一 Worker 串行执行每个订单的固定四阶段任务链：
+TaskRunner 是一个只保存在内存中的饮料订单调度器。系统维护一个有界 FIFO
+订单队列，并用唯一 Worker 串行执行每个订单的固定四阶段任务链：
 
 ```text
-抓取 Pick
-  → 进入运输姿态并导航到放置站 TransportToDropoff
-  → 放置饮料 Place
-  → AGV 返回抓取站并让机器人回初始位 ReturnAndReset
+抓取识别 → 运送到放置位 → 放置 → 返回并复位
 ```
 
-当前版本不使用 SQLite，不恢复进程退出前的订单，也不提供 HTTP 接口。
+订单内部任务不是第二个 FIFO。`BLOCKED` 和 `SKIPPED` 只表达阶段依赖和
+失败后的跳过结果。
 
-## 2. 文件职责
+当前版本提供本地可视化测试页。该页面只用于测试 TaskRunner，不属于正式
+`frontend/`，也不提供持久化、历史订单或恢复功能。
 
-| 文件 | 用途 | 一般调用方是否需要直接导入 |
-| --- | --- | --- |
-| `taskrunner_contracts.py` | 订单/任务状态、暂停原因、执行结果和只读快照 | 需要读取状态时使用 |
-| `errors.py` | 队列满、订单不存在、不可取消、致命故障等异常 | 建议按需捕获 |
-| `queue.py` | 线程安全、有界、可删除的 FIFO；只保存等待订单 ID | 不需要 |
-| `orders.py` | 饮料订单实体、固定任务链和真机动作适配器 | 自定义动作或扩展订单时使用 |
-| `monitor.py` | 通过独立控制器连接监控掉使能和错误码 | 真机组装时使用 |
-| `runner.py` | 单 Worker、状态流转及主要公共接口 | 核心入口 |
-| `runtime.py` | 真实机器人、相机、Workflow 和 AGV 的对象组装与启动基线 | 真机入口使用 |
-| `cli.py` | 长时运行的交互测试终端 | 人工联调使用 |
-| `PLAN.md` | 第一版的完整设计约束和测试计划 | 设计审阅使用 |
+## 2. 主要模块
 
-常规业务代码可以直接这样导入：
+| 模块 | 用途 |
+| --- | --- |
+| `taskrunner_contracts.py` | 状态枚举、执行结果和只读快照 |
+| `orders.py` | 饮料订单、四阶段任务链和正式/测试动作适配器 |
+| `queue.py` | 线程安全的有界 FIFO 等待队列 |
+| `runner.py` | 唯一 Worker、状态转换和公共接口 |
+| `monitor.py` | 独立连接监控掉使能和控制器报警 |
+| `runtime.py` | 正式硬件运行时与识别测试运行时的对象组装 |
+| `test_ui.py` | 本地 HTTP 服务及可视化测试入口 |
+| `ui/` | 原生 HTML、CSS 和 JavaScript 页面 |
+
+## 3. 公共接口
+
+常规调用方只通过 `TaskRunner` 访问状态：
 
 ```python
-from taskrunner import OrderStatus, TaskRunner, TaskStatus
+start() -> None
+shutdown() -> None
+get_status() -> RunnerStatusSnapshot
+submit_beverage(item_id: str) -> OrderSnapshot
+get_queue() -> QueueSnapshot
+get_order(order_id: str) -> OrderSnapshot
+cancel_order(order_id: str) -> OrderSnapshot
 ```
 
-## 3. 核心执行流程
+支持的饮料：
 
-```mermaid
-flowchart TD
-    A[submit_beverage] --> B[进入 FIFO 等待队列]
-    B --> C[唯一 Worker 领取订单]
-    C --> D[Pick]
-    D -->|成功| E[TransportToDropoff]
-    E -->|成功| F[Place]
-    F -->|成功| G[ReturnAndReset]
-    G -->|成功| H[订单 SUCCEEDED]
-
-    D -->|第一次未识别| I[Pick FAILED: out_of_stock]
-    I --> J[后三个任务 SKIPPED]
-
-    D -->|第二次未识别或抓取前 MvL 不可达| K[订单和 Pick PAUSED]
-    K -->|cancel_order| L[Worker 执行回初始位]
-    L -->|成功| M[订单 CANCELLED]
-    L -->|失败| N[致命故障并停止 Runner]
-
-    E -->|异常| N
-    F -->|异常| N
-    G -->|异常| N
-```
-
-一个订单开始执行后会独占机器人，四个阶段之间不会穿插其他订单。
-
-## 4. TaskRunner 公共接口
-
-### `start()`
-
-启动基线检查、唯一 Worker 和可选控制器监控。必须在提交订单前调用。
-
-Runner 正常关闭或发生致命故障后不能重新启动，需要重新构造运行时。
-
-### `submit_beverage(item_id)`
-
-提交饮料订单，返回提交瞬间的 `OrderSnapshot`。
-
-支持的商品 ID：
-
-| `item_id` | 视觉检测标签 |
+| `item_id` | 检测标签 |
 | --- | --- |
 | `water` | `mineral_water` |
 | `cola` | `coco_cola` |
 | `oolong_tea` | `oolong_tea` |
 
-等待队列默认最多 10 个订单。当前正在执行的订单不计入这 10 个名额。
+`get_queue()` 返回当前活动订单和 FIFO 等待订单。每个订单快照都包含完整的
+四阶段任务链。终态订单不在队列快照中，但进程退出前仍可用 `get_order()`
+按 ID 查询。
 
-### `get_queue()`
+`get_status()` 返回：
 
-返回 `QueueSnapshot`：
-
-- `current_order`：当前活动订单，没有则为 `None`。
-- `pending_orders`：按 FIFO 顺序排列的等待订单。
-- `pending_count`：等待订单数量。
-- `capacity`：等待队列容量。
-
-终态订单不会出现在队列快照中。
-
-### `get_order(order_id)`
-
-按 ID 查询完整订单快照，包括四个任务的状态、错误码和暂停原因。终态订单在
-当前进程退出前仍可查询。
-
-### `cancel_order(order_id)`
-
-取消行为取决于当前状态：
-
-| 订单状态 | 行为 |
+| Runner 状态 | 含义 |
 | --- | --- |
-| `QUEUED` | 立即从 FIFO 删除；抓取任务 `CANCELLED`，后续任务 `SKIPPED` |
-| `PAUSED` | 返回 `CANCELLING`；唯一 Worker 异步回初始位，成功后 `CANCELLED` |
-| `RUNNING` | 抛出 `OrderNotCancellableError`，首版不允许运动中取消 |
-| 已终态 | 幂等返回当前快照，不重复执行动作 |
+| `NOT_STARTED` | 尚未执行 `start()` |
+| `IDLE` | 已启动，正在等待订单 |
+| `RUNNING` | 存在当前订单或等待订单 |
+| `FAULTED` | 已发生致命故障并停止调度 |
+| `STOPPED` | 已正常关闭 |
 
-首版没有 `resume()`。暂停订单只能查询或取消。
+## 4. 状态和取消规则
 
-暂停订单仍占用当前活动槽位，因此后续订单可以继续提交，但会留在 FIFO 中，
-直到暂停订单被取消或系统因致命故障退出。
-
-### `shutdown()`
-
-系统空闲时停止监控和 Worker。仍有活动或等待订单时抛出
-`RunnerBusyError`，防止直接断开正在使用的硬件。
-
-## 5. 最小 Python 示例
-
-下面的示例不连接硬件，只展示如何实现动作端口并使用公共接口：
-
-```python
-import time
-
-from taskrunner import TaskRunner
-from taskrunner.taskrunner_contracts import (
-    RobotTaskType,
-    TaskExecutionResult,
-    TERMINAL_ORDER_STATUSES,
-)
-
-
-class DemoActions:
-    def execute(
-        self,
-        task_type: RobotTaskType,
-        *,
-        item_id: str,
-        target_id: str,
-    ) -> TaskExecutionResult:
-        print("执行", task_type.value, item_id, target_id)
-        return TaskExecutionResult.succeeded()
-
-    def cancel_paused_pick(self) -> None:
-        print("模拟回到初始位")
-
-
-runner = TaskRunner(DemoActions(), queue_capacity=10)
-runner.start()
-
-submitted = runner.submit_beverage("water")
-print("订单 ID:", submitted.order_id)
-print("队列:", runner.get_queue())
-print("订单:", runner.get_order(submitted.order_id))
-
-# Worker 是异步线程；等待订单进入终态后才能正常关闭。
-while runner.get_order(submitted.order_id).status not in TERMINAL_ORDER_STATUSES:
-    time.sleep(0.05)
-runner.shutdown()
-```
-
-动作实现的约束：
-
-- 正常成功：返回 `TaskExecutionResult.succeeded()`。
-- 无库存等普通订单失败：返回 `TaskExecutionResult.failed(...)`。
-- 允许人工介入的抓取问题：返回 `TaskExecutionResult.paused(...)`。
-- 控制器报警、断连、抓取后的运动失败等致命问题：直接抛出异常。
-
-## 6. 使用交互式 CLI
-
-### 模拟模式
-
-默认不连接任何硬件：
-
-```powershell
-python -m taskrunner.cli
-```
-
-可调整模拟任务耗时和队列容量：
-
-```powershell
-python -m taskrunner.cli --fake-task-delay 0.5 --queue-capacity 10
-```
-
-进入提示符后可以持续输入：
+订单状态：
 
 ```text
-submit water
-submit cola
-queue
-status <order_id>
-cancel <order_id>
-help
-quit
+QUEUED / RUNNING / PAUSED / CANCELLING /
+SUCCEEDED / FAILED / CANCELLED
 ```
 
-`quit` 只会在系统空闲时成功。任务仍在运行或排队时会显示错误，不会强制关闭
-硬件连接。
+任务状态：
 
-### 真机模式
+```text
+BLOCKED / QUEUED / RUNNING / PAUSED / CANCELLING /
+SUCCEEDED / FAILED / CANCELLED / SKIPPED
+```
 
-只有显式增加 `--real` 才连接设备：
+- 第一次识别不到目标：订单 `FAILED(out_of_stock)`，后三阶段 `SKIPPED`。
+- 第二次识别不到目标：抓取任务和订单进入 `PAUSED`。
+- 正式抓取中，抓取前明确的 MvL 目标不可达也进入 `PAUSED`。
+- 排队订单可以立即取消。
+- 暂停订单由唯一 Worker 执行回初始位后取消。
+- 正在正常执行的订单不能取消。
+- 首版没有 `resume()`。
+
+## 5. 两种运行时
+
+### 正式硬件运行时
+
+`create_hardware_runtime()` 连接：
+
+- 正式机器人控制和监控端口。
+- 测试配置指定的相机。
+- 灵巧手。
+- AGV。
+- `TwoStagePickWorkflow`。
+
+启动前检查机器人初始位、使能和报警状态，以及 AGV 是否位于抓取站点。
+
+### 识别测试运行时
+
+`create_recognition_test_runtime()` 连接：
+
+- 默认 `192.168.110.77` 的模拟机器人控制和监控端口。
+- 默认逻辑相机 `left`。
+- `workflows.test_recognition_workflow.TestRecognitionWorkflow`。
+- `orders.TestRecognitionOrders`。
+
+此运行时不会导入、构造或连接 AGV，也不会创建灵巧手执行器。
+
+测试订单的阶段行为：
+
+1. 抓取：真实调用相机识别测试 Workflow。
+2. 运送：模拟机器人进入运输姿态，等待 3 秒模拟 AGV。
+3. 放置：模拟机器人执行放置动作，等待 3 秒，不操作灵巧手。
+4. 复位：等待 3 秒模拟返回，模拟机器人回初始位。
+
+当前识别测试 Workflow 不发送 `movel`/`movel_model`，因此不能用该页面验收
+`target_unreachable`。
+
+## 6. 启动测试页面
+
+准备条件：
+
+1. `192.168.110.77` 的模拟机器人可访问控制端口和监控端口。
+2. 模拟机器人允许登录和上使能，并位于约定初始位。
+3. `left` 相机已连接且没有被其他进程占用。
+4. 模型、标签、相机参数和三个相机外参文件位于 `config/`。
+
+启动：
 
 ```powershell
-python -m taskrunner.cli --real
+python -m taskrunner.test_ui
 ```
 
-可覆盖配置与 AGV 参数：
+浏览器打开：
+
+```text
+http://127.0.0.1:8765
+```
+
+常用覆盖参数：
 
 ```powershell
-python -m taskrunner.cli --real `
-  --config-dir .\config `
-  --agv-ip 192.168.110.93 `
-  --agv-port 9201 `
-  --agv-device-id 1 `
-  --joint-tolerance-deg 2.0
+python -m taskrunner.test_ui `
+  --robot-ip 192.168.110.77 `
+  --camera left `
+  --port 8765 `
+  --queue-capacity 10 `
+  --stage-delay 3
 ```
 
-真机启动要求：
+页面只监听本机地址，不提供认证，也不应部署为生产服务。
 
-1. 控制端口、独立监控端口、AGV 和相机均可连接。
-2. 机器人已使能且没有控制器/驱动错误。
-3. 机器人静止，并位于约定初始关节位（默认容差 2°）。
-4. AGV 的终到站点为 4。
-5. 相机已有画面，检测模型和 SnapshotCommand 可以完成初始化。
+## 7. 页面功能和数据边界
 
-任一条件不满足都会拒绝启动任务执行。
+页面显示：
 
-## 7. 状态含义
+- Runner 生命周期和致命故障。
+- 当前订单与四阶段任务链。
+- FIFO 等待订单、排队位置和容量。
+- 暂停原因、错误码和状态消息。
+- 约 8 秒的终态结果提示。
 
-### 订单状态
+页面允许：
 
-| 状态 | 含义 |
-| --- | --- |
-| `QUEUED` | 在全局 FIFO 中等待 |
-| `RUNNING` | 某个内部任务正在执行 |
-| `PAUSED` | 抓取阶段等待人工处理 |
-| `CANCELLING` | Worker 正在执行暂停取消的安全回位 |
-| `SUCCEEDED` | 四个阶段全部完成 |
-| `FAILED` | 普通订单失败或致命故障 |
-| `CANCELLED` | 排队取消或暂停取消已完成 |
+- 提交三种饮料订单。
+- 取消 `QUEUED` 订单。
+- 取消 `PAUSED` 订单。
 
-### 任务状态
+HTTP 适配层只调用 `get_status()`、`get_queue()`、`get_order()`、
+`submit_beverage()`、`cancel_order()` 和 `shutdown()`。它不读取 `_orders`、
+`_queue` 或其他私有字段。
 
-| 状态 | 含义 |
-| --- | --- |
-| `BLOCKED` | 前置任务尚未成功，当前任务不能执行 |
-| `QUEUED` | 已具备执行资格 |
-| `RUNNING` | 正在执行 |
-| `PAUSED` | 当前抓取任务等待处理 |
-| `CANCELLING` | 正在安全回位 |
-| `SUCCEEDED` / `FAILED` / `CANCELLED` | 对应终态 |
-| `SKIPPED` | 前序失败或取消后确定不会执行 |
+浏览器每 500 ms 轮询一次。终态订单从主区域消失后，页面用已知 ID 调用一次
+`get_order()` 并显示临时提示；刷新页面后不会保留。
 
-`BLOCKED` 不是故障，`SKIPPED` 也不是第二个任务队列中的“跳过动作”。它们
-只是订单内部依赖关系的状态记录。
+## 8. 致命故障和退出
 
-## 8. 暂停与致命故障
+以下情况会让 Runner 进入 `FAULTED`：
 
-允许进入 `PAUSED` 的情况只有：
-
-- TwoStagePickWorkflow 第二次拍照没有识别到目标。
-- 抓住物体之前，`movel`/`movel_model` 明确返回目标点不可达。
-
-以下情况不会暂停，而会停止整个 Runner：
-
-- 机器人掉使能。
+- 模拟机器人掉使能。
 - 控制器或驱动器错误码非零。
 - 独立监控连接读取失败。
-- 运输、放置、复位失败。
-- 抓住物体后的任何运动失败。
-- 暂停取消时无法回到初始位。
-- AGV 导航最终失败。
+- 测试动作或暂停取消动作抛出异常。
 
-AGV 因临时障碍进入自身等待/暂停时，TaskRunner 的订单仍保持 `RUNNING`；
-`navigate_to()` 返回最终失败时才进入致命故障流程。
+发生故障后，测试运行时关闭相机和机器人连接，HTTP 页面继续运行并只读显示
+故障，不能继续下单。
 
-`on_fatal(error)` 由宿主提供。Runner 会停止调度并更新订单状态，但不会自行
-调用 `sys.exit()`；宿主应在回调或主循环中结束进程并关闭资源。
+按 `Ctrl+C` 退出。如果仍有活动或等待订单，服务会拒绝退出；应先在页面取消
+可取消订单，或等待当前订单结束。
 
-## 9. 直接组装真机运行时
+## 9. 快速验收
 
-不使用 CLI 时，可直接调用：
+1. 不摆放目标并下单：应显示 `FAILED(out_of_stock)`，后续阶段为 `SKIPPED`。
+2. 目标连续两次可见：应观察四阶段依次执行并最终成功。
+3. 第一次识别后在 0.5 秒内移走或遮挡目标：订单应进入 `PAUSED`。
+4. 取消暂停订单：模拟机器人回初始位，订单变为 `CANCELLED`，下一单继续。
+5. 连续下单：验证 FIFO、容量和排队取消。
+6. 让模拟机器人掉使能：Runner 应显示 `FAULTED` 并停止接单。
 
-```python
-from pathlib import Path
-import time
+## 10. 自动化测试
 
-from taskrunner.runtime import create_hardware_runtime
-from taskrunner.taskrunner_contracts import TERMINAL_ORDER_STATUSES
-
-
-fatal_errors = []
-
-
-def on_fatal(error: Exception) -> None:
-    fatal_errors.append(error)
-    # 在宿主主循环中触发退出；不要在这里并发发送机器人动作。
-
-
-runtime = create_hardware_runtime(
-    config_dir=Path("config"),
-    on_fatal=on_fatal,
-)
-
-try:
-    runtime.runner.start()
-    order = runtime.runner.submit_beverage("water")
-    print(order.order_id)
-    while runtime.runner.get_order(order.order_id).status not in TERMINAL_ORDER_STATUSES:
-        time.sleep(0.1)
-finally:
-    # 正常关闭要求队列已空；致命故障后 shutdown 可以进入清理流程。
-    runtime.runner.shutdown()
-    runtime.close()
-```
-
-控制命令连接和状态监控连接必须是两个不同的 Backend 实例。不要把同一个
-WebSocket 同时交给动作执行与监控线程。
-
-## 10. 运行测试
-
-TaskRunner 自身测试：
+TaskRunner 测试不连接设备：
 
 ```powershell
 python -m unittest discover -s taskrunner\tests -v
 ```
 
-包含 Workflow 和机器人 Backend 的测试需要项目依赖环境：
+包含 Workflow 和 Backend 的相关测试：
 
 ```powershell
 python -m pytest `
@@ -340,15 +221,12 @@ python -m pytest `
   tests\robot\test_kaanh_backend.py -q
 ```
 
-这些测试不连接真实硬件，使用假动作、假状态和假 AGV 验证状态流转。
+## 11. 当前边界
 
-## 11. 当前版本边界
-
-- 不持久化订单和任务。
-- 不查询进程退出前的历史。
+- 不持久化订单或任务。
+- 不提供历史列表。
 - 不实现 `resume()`。
-- 不允许取消正在正常执行的订单。
-- 不实现订单优先级；当前为 FIFO，但队列封装允许后续替换。
-- 不实现咖啡订单、HTTP API 或前端适配。
-- 真机验收仍需依次验证无库存、二次识别暂停、暂停取消、完整取送、MvL
-  目标不可达和控制器掉使能。
+- 不允许取消正常运行中的订单。
+- 不实现优先级或插队。
+- 不实现咖啡订单。
+- 测试页面不显示相机画面，也不提供直接设备控制。

@@ -5,7 +5,7 @@ from enum import Enum
 import unittest
 
 from taskrunner.errors import FatalExecutionError
-from taskrunner.orders import HardwareBeverageOrderActions
+from taskrunner.orders import HardwareBeverageOrderActions, TestRecognitionOrders
 from taskrunner.taskrunner_contracts import (
     PauseReason,
     RobotTaskType,
@@ -170,6 +170,71 @@ class HardwareBeverageOrderActionsTests(unittest.TestCase):
         self.assertEqual(robot.calls, [("init", None)])
         self.assertEqual(hand.calls, [])
         self.assertEqual(agv.calls, [])
+
+
+class TestRecognitionOrdersTests(unittest.TestCase):
+    def make_actions(self, workflow_result=0, *, model_id: int = 0):
+        workflow = FakePickWorkflow(workflow_result)
+        robot = FakeRobotExecutor()
+        actions = TestRecognitionOrders(
+            pick_workflow=workflow,
+            robot_executor=robot,
+            model_id=model_id,
+            stage_delay_s=0,
+        )
+        return actions, workflow, robot
+
+    def test_four_stage_test_sequence_without_agv_or_hand(self) -> None:
+        actions, workflow, robot = self.make_actions(model_id=1)
+
+        for task_type in RobotTaskType:
+            result = actions.execute(
+                task_type,
+                item_id="water",
+                target_id="mineral_water",
+            )
+            self.assertEqual(result.status, TaskStatus.SUCCEEDED)
+
+        self.assertEqual(workflow.calls, [(1, "mineral_water")])
+        self.assertEqual(
+            robot.calls,
+            [
+                ("transport", None),
+                ("place", None),
+                ("offset", (1, [35.5, 0, 0])),
+                ("init", None),
+            ],
+        )
+
+    def test_pick_results_use_shared_normalization(self) -> None:
+        actions, *_ = self.make_actions(
+            StructuredWorkflowResult(
+                WorkflowStatus.OUT_OF_STOCK,
+                message="first detection missed",
+            )
+        )
+        result = actions.execute(
+            RobotTaskType.PICK,
+            item_id="water",
+            target_id="mineral_water",
+        )
+        self.assertEqual(result.status, TaskStatus.FAILED)
+        self.assertEqual(result.error_code, "out_of_stock")
+
+    def test_cancel_returns_simulated_robot_to_initial_pose(self) -> None:
+        actions, _, robot = self.make_actions()
+        actions.cancel_paused_pick()
+        self.assertEqual(robot.calls, [("init", None)])
+
+    def test_rejects_invalid_model_or_delay(self) -> None:
+        with self.assertRaises(ValueError):
+            self.make_actions(model_id=2)
+        with self.assertRaises(ValueError):
+            TestRecognitionOrders(
+                pick_workflow=FakePickWorkflow(),
+                robot_executor=FakeRobotExecutor(),
+                stage_delay_s=-1,
+            )
 
 
 if __name__ == "__main__":
