@@ -18,10 +18,12 @@ ROOT = Path(__file__).resolve().parent
 TERMINAL = {"completed", "failed", "stopped"}
 STATES = TERMINAL | {"queued", "running", "stopping", "needs_attention"}
 CATALOG = {"water": "drinks", "cola": "drinks", "oolong_tea": "drinks",
-           "potato_chips": "snacks", "cookies": "snacks", "chocolate": "snacks"}
+           "potato_chips": "snacks", "cookies": "snacks", "chocolate": "snacks",
+           "americano": "coffee", "latte": "coffee", "cappuccino": "coffee"}
 
 ITEM_NAMES = {"water": "矿泉水", "cola": "可乐", "oolong_tea": "乌龙茶",
-              "potato_chips": "薯片", "cookies": "饼干", "chocolate": "巧克力"}
+              "potato_chips": "薯片", "cookies": "饼干", "chocolate": "巧克力",
+              "americano": "美式", "latte": "拿铁", "cappuccino": "卡布奇诺"}
 
 
 class APIError(Exception):
@@ -188,7 +190,8 @@ class Store:
             request_id = body.get("request_id")
             if not isinstance(item_id, str) or item_id not in CATALOG:
                 raise APIError(400, "未知商品")
-            expected = "grab_drink" if CATALOG[item_id] == "drinks" else "grab_snack"
+            expected = {"drinks": "grab_drink", "snacks": "grab_snack",
+                        "coffee": "make_coffee"}[CATALOG[item_id]]
             if body.get("action", expected) != expected:
                 raise APIError(400, "动作与商品不匹配")
             if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,100}", request_id):

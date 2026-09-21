@@ -26,9 +26,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config"
 # 测试任务中的相机画面时，暂时关闭新增的实机库存识别检查。
 CHECK_INVENTORY_BEFORE_PICK = False
+COFFEE_ITEMS = ('coffee', 'americano', 'latte', 'cappuccino')
 ITEM_TARGETS = {
     'water': 'mineral_water', 'cola': 'coco_cola', 'oolong_tea': 'oolong_tea',
     'potato_chips': 'potato_chips', 'cookies': 'cookies', 'chocolate': 'chocolate',
+    # 咖啡制作使用占位动作，不依赖成品目标识别。
+    **{item: None for item in COFFEE_ITEMS},
 }
 
 
@@ -123,6 +126,8 @@ class Runtime:
             return self.pick_cookies
         elif item_id == 'chocolate':
             return self.pick_chocolate
+        elif item_id in COFFEE_ITEMS:
+            return self.make_coffee
         else:
             # 未知ID时避免执行错误物品的动作
             raise ValueError('Unsupported item_id: ' + str(item_id))
@@ -258,6 +263,10 @@ class Runtime:
         print ("没有chocolate动作")
         return 0
 
+    def make_coffee(self):
+        # 制作咖啡占位函数
+        print("没有制作咖啡动作")
+        return 0
 
 # 启动时默认有库存；仅点击商品后识别更新，不在任务完成后扣减数量。
 class Tasks:
@@ -346,7 +355,7 @@ class Tasks:
             with self.device_lock:
                 if self.runtime.dry_run:
                     available = self.confirmation.get(item, self.stock[item])
-                elif CHECK_INVENTORY_BEFORE_PICK:
+                elif CHECK_INVENTORY_BEFORE_PICK and item not in COFFEE_ITEMS:
                     available = self.runtime.check_inventory((item,))[item]
                 else:
                     available = 1
@@ -459,12 +468,9 @@ def serve(manager, token, host, port):
 
 # 主程序
 if __name__=='__main__':
-    # 示例：python run_movej_api.py --dry-run
-    # 真实模式：python run_movej_api.py
     p=argparse.ArgumentParser()
     # --dry-run：无硬件演示；--host：默认监听所有本机网卡；--port：HTTP 默认 8088
     p.add_argument('--dry-run',action='store_true');p.add_argument('--host',default='0.0.0.0');p.add_argument('--port',type=int,default=8088)
-    # 机器人端任务文件默认位于本脚本旁的data/movej_tasks.json，与前端库存分开
     p.add_argument('--tasks-data',default=str(Path(__file__).parent/'data/movej_tasks.json'))
     # 启动前设置环境变量ROBOT_API_TOKEN，前端的 KAANH_API_TOKEN 必须与它一致
     a=p.parse_args();token=os.environ.get('ROBOT_API_TOKEN','')

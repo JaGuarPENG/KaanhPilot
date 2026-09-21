@@ -4,15 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f5f5f7">
-  <meta name="description" content="选择饮料或零食，轻触卡片发送机械臂抓取指令。">
+  <meta name="description" content="选择零食、饮料或咖啡，轻触卡片发送任务。">
   <title>KAANH · 机械臂抓取控制台</title>
   <link rel="stylesheet" href="styles.css?v=binary-stock-1">
   <link rel="stylesheet" href="brand.css?v=binary-stock-1">
-  <link rel="stylesheet" href="categories.css?v=binary-stock-1">
+  <link rel="stylesheet" href="categories.css?v=coffee-wheel-1">
   <link rel="stylesheet" href="cameras.css?v=binary-stock-1">
   <link rel="stylesheet" href="inventory.css?v=binary-stock-1">
   <script src="config.js?v=dual-camera-2" defer></script>
-  <script src="app.js?v=dual-camera-2" defer></script>
+  <script src="app.js?v=coffee-gateway-1" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -30,16 +30,17 @@
           <span class="capture-indicator" id="capture-indicator" aria-hidden="true"></span>
         </div>
         <div class="capture-controls">
-          <span class="capture-count">6 款商品</span>
+          <span class="capture-count">9 款商品</span>
           <button class="menu-toggle" id="product-menu-toggle" aria-expanded="false" aria-controls="selection-stage">全部商品 <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"/></svg></button>
         </div>
       </section>
       <div class="selection-stage" id="selection-stage"><div class="selection-content">
       <section class="intro" aria-labelledby="page-title">
-        <div class="category-switch" role="tablist" aria-label="抓取类别" data-category="drinks">
+        <div class="category-switch" role="tablist" aria-label="商品类别，可左右滑动切换" data-category="drinks">
           <span class="category-thumb" aria-hidden="true"></span>
-          <button type="button" role="tab" id="tab-drinks" aria-controls="panel-drinks" aria-selected="true" tabindex="0" data-category="drinks">饮料</button>
-          <button type="button" role="tab" id="tab-snacks" aria-controls="panel-snacks" aria-selected="false" tabindex="-1" data-category="snacks">零食</button>
+          <button type="button" role="tab" id="tab-snacks" aria-controls="panel-snacks" aria-selected="false" tabindex="-1" data-category="snacks" data-position="left">零食</button>
+          <button type="button" role="tab" id="tab-drinks" aria-controls="panel-drinks" aria-selected="true" tabindex="0" data-category="drinks" data-position="center">饮料</button>
+          <button type="button" role="tab" id="tab-coffee" aria-controls="panel-coffee" aria-selected="false" tabindex="-1" data-category="coffee" data-position="right">咖啡</button>
         </div>
         <h1 id="page-title">想喝点什么？</h1>
         <p class="subtitle" id="category-description">选择一款饮料，即可发送抓取指令。</p>
@@ -93,6 +94,26 @@
         </button>
       </section>
 
+      <section class="drink-grid category-panel" id="panel-coffee" role="tabpanel" aria-labelledby="tab-coffee" data-category="coffee" hidden>
+        <button class="drink-card" disabled data-item="americano" aria-label="制作美式咖啡">
+          <span class="card-number" aria-hidden="true">01</span><span class="selected-mark" aria-hidden="true">✓</span>
+          <span class="drink-image coffee-image americano" role="img" aria-label="一杯深醇美式咖啡"></span>
+          <span class="drink-name">美式</span><span class="drink-description">清冽醇香 <span>·</span> 经典黑咖啡</span>
+          <span class="card-action">点击制作 <span class="arrow" aria-hidden="true">↗</span></span>
+        </button>
+        <button class="drink-card" disabled data-item="latte" aria-label="制作拿铁咖啡">
+          <span class="card-number" aria-hidden="true">02</span><span class="selected-mark" aria-hidden="true">✓</span>
+          <span class="drink-image coffee-image latte" role="img" aria-label="一杯柔和奶香的拿铁"></span>
+          <span class="drink-name">拿铁</span><span class="drink-description">柔和奶香 <span>·</span> 绵密顺滑</span>
+          <span class="card-action">点击制作 <span class="arrow" aria-hidden="true">↗</span></span>
+        </button>
+        <button class="drink-card" disabled data-item="cappuccino" aria-label="制作卡布奇诺">
+          <span class="card-number" aria-hidden="true">03</span><span class="selected-mark" aria-hidden="true">✓</span>
+          <span class="drink-image coffee-image cappuccino" role="img" aria-label="一杯覆有细腻奶泡的卡布奇诺"></span>
+          <span class="drink-name">卡布奇诺</span><span class="drink-description">浓郁平衡 <span>·</span> 轻盈奶泡</span>
+          <span class="card-action">点击制作 <span class="arrow" aria-hidden="true">↗</span></span>
+        </button>
+      </section>
       </div></div>
 
       <section class="camera-workspace" id="camera-workspace" aria-labelledby="camera-title" hidden>
@@ -155,6 +176,7 @@
           <label>商品<select id="inventory-test-item" name="item_id">
             <option value="water">矿泉水</option><option value="cola">可乐</option><option value="oolong_tea">乌龙茶</option>
             <option value="potato_chips">薯片</option><option value="cookies">饼干</option><option value="chocolate">巧克力</option>
+            <option value="americano">美式</option><option value="latte">拿铁</option><option value="cappuccino">卡布奇诺</option>
           </select></label>
           <label>测试场景<select id="inventory-test-scenario" name="scenario">
             <option value="available">有库存</option><option value="sold-out">已售尽</option><option value="confirmation-empty">确认时才发现售尽</option>
