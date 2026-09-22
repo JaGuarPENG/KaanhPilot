@@ -21,6 +21,7 @@ from perception.roi_localizer import RoiPointCloudLocalizer
 from robot.agv_backend import AGVBackend
 from commands.hand_commands import HandCommandExecutor
 from workflows.two_stage_pick_workflow import TwoStagePickWorkflow
+from workflows.pick_result import PickWorkflowStatus
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config"
@@ -201,9 +202,12 @@ class Runtime:
     # 修改相应函数来执行对应动作
     def pick_water(self):
         # 矿泉水
-        ret = self.two_stage_pick_workflow.execute(0, "mineral_water")
-        if ret != 0:
-            print(f"[抓取] 矿泉水抓取失败，返回码 {ret}。")
+        result = self.two_stage_pick_workflow.execute(0, "mineral_water")
+        if result.status is not PickWorkflowStatus.SUCCEEDED:
+            print(
+                f"[抓取] 矿泉水抓取未完成，"
+                f"状态={result.status.value}: {result.message or ''}"
+            )
             return 0
         self.robot_executor.move_transport_pose()
         self.agv.navigate_to(5)
@@ -218,9 +222,12 @@ class Runtime:
 
     def pick_cola(self):
         # 可乐
-        ret = self.two_stage_pick_workflow.execute(0, "coco_cola")
-        if ret != 0:
-            print(f"[抓取] 可乐抓取失败，返回码 {ret}。")
+        result = self.two_stage_pick_workflow.execute(0, "coco_cola")
+        if result.status is not PickWorkflowStatus.SUCCEEDED:
+            print(
+                f"[抓取] 可乐抓取未完成，"
+                f"状态={result.status.value}: {result.message or ''}"
+            )
             return 0
         self.robot_executor.move_transport_pose()
         self.agv.navigate_to(5)
@@ -234,9 +241,12 @@ class Runtime:
 
     def pick_oolong_tea(self):
         # 乌龙茶
-        ret = self.two_stage_pick_workflow.execute(0, "oolong_tea")
-        if ret != 0:
-            print(f"[抓取] 乌龙茶抓取失败，返回码 {ret}。")
+        result = self.two_stage_pick_workflow.execute(0, "oolong_tea")
+        if result.status is not PickWorkflowStatus.SUCCEEDED:
+            print(
+                f"[抓取] 乌龙茶抓取未完成，"
+                f"状态={result.status.value}: {result.message or ''}"
+            )
             return 0
         self.robot_executor.move_transport_pose()
         self.agv.navigate_to(5)

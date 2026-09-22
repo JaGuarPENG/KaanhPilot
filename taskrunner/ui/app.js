@@ -81,7 +81,7 @@ function renderCurrent(order) {
   details.append(el("div", "order-id", order.order_id));
   row.append(details, cancelButton(order));
   root.append(row);
-  const reason = order.pause_reason ? labels.pauses[order.pause_reason] || order.pause_reason : "";
+  const reason = order.error_code ? labels.pauses[order.error_code] || order.error_code : "";
   root.append(el("p", "order-message", order.message || reason));
   root.append(taskChain(order.tasks));
 }

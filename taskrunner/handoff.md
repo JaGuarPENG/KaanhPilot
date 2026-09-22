@@ -45,7 +45,6 @@ TaskRunner(
     *,
     queue_capacity=10,
     monitor=None,
-    readiness_check=None,
     on_fatal=None,
     order_id_factory=None,
 )
@@ -56,7 +55,6 @@ TaskRunner(
 - `actions`：订单动作适配器，实现四阶段任务和暂停取消回位。
 - `queue_capacity`：FIFO 等待队列最大长度；当前正在执行的订单不占用该容量。
 - `monitor`：可选的独立控制器监控器。
-- `readiness_check`：可选的启动安全检查，在 Worker 和监控启动前执行。
 - `on_fatal`：发生首个致命故障后的宿主回调，通常用于关闭硬件资源。
 - `order_id_factory`：可选订单 ID 生成器；默认生成 UUID 字符串。
 
@@ -64,7 +62,7 @@ TaskRunner(
 
 ### `start() -> None`
 
-执行启动安全检查，随后启动唯一订单 Worker 和可选控制器监控。
+启动唯一订单 Worker 和可选控制器监控。
 
 ```python
 runtime = create_hardware_runtime(config_dir=config_dir)
@@ -77,7 +75,6 @@ runner.start()
 - 重复调用已启动 Runner 的 `start()` 是幂等的。
 - Runner 关闭后不能重新启动。
 - Runner 发生致命故障后不能重新启动。
-- 启动检查失败时直接抛出异常，不会开始接单。
 
 ## 3. 查询 Runner 全局状态
 
@@ -232,7 +229,6 @@ except UnknownOrderError:
     print("当前进程中不存在该订单")
 else:
     print(order.status.value)
-    print(order.current_task_type.value if order.current_task_type else None)
     print(order.message)
 ```
 
@@ -247,8 +243,6 @@ OrderSnapshot(
     target_id="mineral_water",
     status=OrderStatus.RUNNING,
     tasks=(...),
-    current_task_type=RobotTaskType.PICK,
-    pause_reason=None,
     error_code=None,
     message=None,
     created_at=1789970000.125,
@@ -316,8 +310,6 @@ order.item_id           # str
 order.target_id         # str
 order.status            # OrderStatus
 order.tasks             # tuple[RobotTaskSnapshot, ...]
-order.current_task_type # RobotTaskType | None
-order.pause_reason      # PauseReason | None
 order.error_code        # str | None
 order.message           # str | None
 order.created_at        # float，Unix 秒
@@ -342,7 +334,6 @@ OrderStatus.CANCELLED    # "cancelled"
 task.task_id       # str
 task.task_type     # RobotTaskType
 task.status        # TaskStatus
-task.pause_reason  # PauseReason | None
 task.error_code    # str | None
 task.message       # str | None
 ```
@@ -370,18 +361,19 @@ TaskStatus.CANCELLED    # "cancelled"
 TaskStatus.SKIPPED      # "skipped"，因前序失败或取消而不再执行
 ```
 
-暂停原因：
+抓取阶段可能产生的业务错误代码：
 
 ```python
-PauseReason.SECOND_DETECTION_FAILED  # "second_detection_failed"
-PauseReason.TARGET_UNREACHABLE       # "target_unreachable"
+"out_of_stock"              # 第一次识别不到目标
+"second_detection_failed"   # 第二次识别不到目标，订单暂停
+"target_unreachable"        # 目标点不可达，订单暂停
 ```
 
 典型结果：
 
 - 第一次识别不到目标：订单 `FAILED`，`error_code="out_of_stock"`，后三阶段为 `SKIPPED`。
-- 第二次识别不到目标：订单 `PAUSED`，暂停原因为 `SECOND_DETECTION_FAILED`。
-- `movel` 或 `movel_model` 目标不可达：订单 `PAUSED`，暂停原因为 `TARGET_UNREACHABLE`。
+- 第二次识别不到目标：订单 `PAUSED`，`error_code="second_detection_failed"`。
+- `movel` 或 `movel_model` 目标不可达：订单 `PAUSED`，`error_code="target_unreachable"`。
 - 致命硬件故障：Runner `FAULTED`，当前订单 `FAILED`，`error_code="fatal_error"`。
 
 ## 9. 报告致命故障
@@ -461,12 +453,7 @@ try:
 
     while True:
         order = runner.get_order(order_id)
-        current = (
-            order.current_task_type.value
-            if order.current_task_type is not None
-            else None
-        )
-        print(order.status.value, current, order.message)
+        print(order.status.value, order.message)
 
         if order.status in TERMINAL_ORDER_STATUSES:
             break

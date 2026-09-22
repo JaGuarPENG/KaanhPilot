@@ -6,8 +6,6 @@ reset remain external order tasks.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum
 import time
 
 import numpy as np
@@ -17,62 +15,12 @@ from commands.robot_commands import RobotCommandExecutor
 from commands.snapshot import SnapShotCommand
 from planner.pose import quaternion_to_rotation
 from robot.kaanh_backend import KaanhRobotBackend, TargetUnreachableError
+from workflows.pick_result import PickWorkflowResult, PickWorkflowStatus
 
 
 SECOND_PHOTO_OFFSET_TOOL_MM = np.asarray((0.0, 20.0, -400.0))
 PREGRASP_OFFSET_TOOL_MM = np.asarray((0.0, 35.0, -285.0))
 FINAL_APPROACH_OFFSET_TOOL_MM = np.asarray((0.0, 0.0, 120.0))
-
-
-class PickWorkflowStatus(str, Enum):
-    SUCCEEDED = "succeeded"
-    OUT_OF_STOCK = "out_of_stock"
-    PAUSED = "paused"
-
-
-class PickPauseReason(str, Enum):
-    SECOND_DETECTION_FAILED = "second_detection_failed"
-    TARGET_UNREACHABLE = "target_unreachable"
-
-
-@dataclass(frozen=True, slots=True, eq=False)
-class PickWorkflowResult:
-    status: PickWorkflowStatus
-    pause_reason: PickPauseReason | None = None
-    message: str | None = None
-
-    def __post_init__(self) -> None:
-        if self.status is PickWorkflowStatus.PAUSED and self.pause_reason is None:
-            raise ValueError("暂停结果必须包含 pause_reason")
-        if self.status is not PickWorkflowStatus.PAUSED and self.pause_reason is not None:
-            raise ValueError("非暂停结果不能包含 pause_reason")
-
-    @property
-    def legacy_code(self) -> int:
-        """Keep existing ``result == 0`` callers working during migration."""
-
-        return 0 if self.status is PickWorkflowStatus.SUCCEEDED else 1
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, int) and not isinstance(other, bool):
-            return self.legacy_code == other
-        if isinstance(other, PickWorkflowResult):
-            return (
-                self.status,
-                self.pause_reason,
-                self.message,
-            ) == (
-                other.status,
-                other.pause_reason,
-                other.message,
-            )
-        return NotImplemented
-
-    def __ne__(self, other: object) -> bool:
-        equal = self.__eq__(other)
-        if equal is NotImplemented:
-            return NotImplemented
-        return not equal
 
 
 class TwoStagePickWorkflow:
@@ -144,8 +92,7 @@ class TwoStagePickWorkflow:
             message = f"第二次拍照未检测到目标 {target_id}，等待人工处理"
             print(f"[抓取] {message}。")
             return PickWorkflowResult(
-                PickWorkflowStatus.PAUSED,
-                PickPauseReason.SECOND_DETECTION_FAILED,
+                PickWorkflowStatus.SECOND_DETECTION_FAILED,
                 message,
             )
 
@@ -196,7 +143,6 @@ class TwoStagePickWorkflow:
         message = f"{stage}目标点不可达，等待人工处理: {error}"
         print(f"[抓取] {message}")
         return PickWorkflowResult(
-            PickWorkflowStatus.PAUSED,
-            PickPauseReason.TARGET_UNREACHABLE,
+            PickWorkflowStatus.TARGET_UNREACHABLE,
             message,
         )

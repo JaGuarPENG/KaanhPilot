@@ -6,12 +6,10 @@ from types import SimpleNamespace
 import pytest
 
 from robot.kaanh_backend import RobotCommandError, TargetUnreachableError
-from taskrunner.orders import HardwareBeverageOrderActions
-from taskrunner.taskrunner_contracts import PauseReason, TaskStatus
+from taskrunner.orders import pick_result_to_task_result
+from taskrunner.taskrunner_contracts import TaskStatus
+from workflows.pick_result import PickWorkflowResult, PickWorkflowStatus
 from workflows.two_stage_pick_workflow import (
-    PickPauseReason,
-    PickWorkflowResult,
-    PickWorkflowStatus,
     TwoStagePickWorkflow,
 )
 
@@ -100,7 +98,6 @@ def test_first_detection_miss_means_out_of_stock(monkeypatch):
     result = workflow.execute(0, "mineral_water")
 
     assert result.status is PickWorkflowStatus.OUT_OF_STOCK
-    assert result.pause_reason is None
     assert robot.movel_calls == []
     assert ("grasp", 15) not in hand.calls
 
@@ -111,8 +108,7 @@ def test_second_detection_miss_pauses(monkeypatch):
 
     result = workflow.execute(0, "mineral_water")
 
-    assert result.status is PickWorkflowStatus.PAUSED
-    assert result.pause_reason is PickPauseReason.SECOND_DETECTION_FAILED
+    assert result.status is PickWorkflowStatus.SECOND_DETECTION_FAILED
     assert ("grasp", 15) not in hand.calls
 
 
@@ -141,8 +137,7 @@ def test_pregrasp_movel_target_unreachable_pauses(
 
     result = workflow.execute(0, "mineral_water")
 
-    assert result.status is PickWorkflowStatus.PAUSED
-    assert result.pause_reason is PickPauseReason.TARGET_UNREACHABLE
+    assert result.status is PickWorkflowStatus.TARGET_UNREACHABLE
     assert stage in result.message
     assert ("grasp", 15) not in hand.calls
 
@@ -156,8 +151,7 @@ def test_final_approach_target_unreachable_pauses(monkeypatch):
 
     result = workflow.execute(0, "mineral_water")
 
-    assert result.status is PickWorkflowStatus.PAUSED
-    assert result.pause_reason is PickPauseReason.TARGET_UNREACHABLE
+    assert result.status is PickWorkflowStatus.TARGET_UNREACHABLE
     assert "最终抓取位置" in result.message
     assert ("grasp", 15) not in hand.calls
 
@@ -189,14 +183,13 @@ def test_successful_pick_returns_structured_success(monkeypatch):
 
 
 def test_workflow_result_contract_maps_into_taskrunner() -> None:
-    paused = HardwareBeverageOrderActions._normalize_pick_result(
+    paused = pick_result_to_task_result(
         PickWorkflowResult(
-            PickWorkflowStatus.PAUSED,
-            PickPauseReason.TARGET_UNREACHABLE,
+            PickWorkflowStatus.TARGET_UNREACHABLE,
             "unreachable",
         )
     )
-    out_of_stock = HardwareBeverageOrderActions._normalize_pick_result(
+    out_of_stock = pick_result_to_task_result(
         PickWorkflowResult(
             PickWorkflowStatus.OUT_OF_STOCK,
             message="empty",
@@ -204,20 +197,14 @@ def test_workflow_result_contract_maps_into_taskrunner() -> None:
     )
 
     assert paused.status is TaskStatus.PAUSED
-    assert paused.pause_reason is PauseReason.TARGET_UNREACHABLE
+    assert paused.error_code == "target_unreachable"
     assert out_of_stock.status is TaskStatus.FAILED
     assert out_of_stock.error_code == "out_of_stock"
 
 
-def test_structured_results_keep_legacy_zero_comparison() -> None:
+def test_structured_results_use_normal_dataclass_equality() -> None:
     succeeded = PickWorkflowResult(PickWorkflowStatus.SUCCEEDED)
     out_of_stock = PickWorkflowResult(PickWorkflowStatus.OUT_OF_STOCK)
-    paused = PickWorkflowResult(
-        PickWorkflowStatus.PAUSED,
-        PickPauseReason.SECOND_DETECTION_FAILED,
-    )
 
-    assert succeeded == 0
-    assert not succeeded != 0
-    assert out_of_stock != 0
-    assert paused != 0
+    assert succeeded == PickWorkflowResult(PickWorkflowStatus.SUCCEEDED)
+    assert succeeded != out_of_stock

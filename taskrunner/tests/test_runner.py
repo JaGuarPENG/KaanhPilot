@@ -15,7 +15,6 @@ from taskrunner.errors import (
 from taskrunner.runner import TaskRunner
 from taskrunner.taskrunner_contracts import (
     OrderStatus,
-    PauseReason,
     RobotTaskType,
     RunnerState,
     TaskExecutionResult,
@@ -46,9 +45,9 @@ class ScriptedActions:
         self.execute_error: Exception | None = None
 
     def execute(
-        self, task_type: RobotTaskType, *, item_id: str, target_id: str
+        self, task_type: RobotTaskType, *, target_id: str
     ) -> TaskExecutionResult:
-        self.execution_log.append((item_id, task_type))
+        self.execution_log.append((target_id, task_type))
         if self.block_on is task_type:
             self.entered.set()
             if not self.release.wait(2.0):
@@ -176,8 +175,8 @@ class TaskRunnerTests(unittest.TestCase):
             "第二个订单没有完成",
         )
         self.assertEqual(
-            [item for item, _ in actions.execution_log],
-            ["water"] * 4 + ["cola"] * 4,
+            [target for target, _ in actions.execution_log],
+            ["mineral_water"] * 4 + ["coco_cola"] * 4,
         )
         self.assertEqual(
             runner.get_order(first.order_id).status, OrderStatus.SUCCEEDED
@@ -229,7 +228,7 @@ class TaskRunnerTests(unittest.TestCase):
         actions = ScriptedActions()
         actions.results.append(
             TaskExecutionResult.paused(
-                PauseReason.SECOND_DETECTION_FAILED,
+                "second_detection_failed",
                 "第二次拍照未识别",
             )
         )
@@ -352,7 +351,7 @@ class TaskRunnerTests(unittest.TestCase):
     def test_failed_pause_cancellation_is_fatal(self) -> None:
         actions = ScriptedActions()
         actions.results.append(
-            TaskExecutionResult.paused(PauseReason.TARGET_UNREACHABLE)
+            TaskExecutionResult.paused("target_unreachable")
         )
         actions.cancel_error = RuntimeError("cannot return to init pose")
         fatal_event = threading.Event()

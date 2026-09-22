@@ -43,8 +43,7 @@ from taskrunner.taskrunner_contracts import (
 class TaskRunner:
     """内存型 FIFO 订单调度器。
 
-    ``actions`` 隔离具体硬件，``readiness_check`` 在启动 Worker 和控制器
-    监控前执行安全基线检查，``on_fatal`` 交给宿主清理资源并退出。
+    ``actions`` 隔离具体硬件，``on_fatal`` 交给宿主清理资源并退出。
     Runner 不持久化订单；进程退出后所有状态均丢弃。
     """
 
@@ -54,14 +53,12 @@ class TaskRunner:
         *,
         queue_capacity: int = 10,
         monitor: ControllerMonitor | None = None,
-        readiness_check: Callable[[], None] | None = None,
         on_fatal: Callable[[Exception], None] | None = None,
         order_id_factory: Callable[[], str] | None = None,
     ) -> None:
         self._actions = actions
         self._queue = BoundedOrderQueue(queue_capacity)
         self._monitor = monitor
-        self._readiness_check = readiness_check
         self._on_fatal = on_fatal or (lambda _error: None)
         self._order_id_factory = order_id_factory or (lambda: str(uuid.uuid4()))
 
@@ -76,7 +73,7 @@ class TaskRunner:
         self._fatal_error: Exception | None = None
 
     def start(self) -> None:
-        """检查启动基线并启动唯一 Worker 与可选控制器监控。
+        """启动唯一 Worker 与可选控制器监控。
 
         重复调用已启动的 Runner 是幂等的；关闭或发生过致命故障后禁止
         重新启动，需重新构造完整运行时。
@@ -89,8 +86,6 @@ class TaskRunner:
                 raise RunnerStoppedError("TaskRunner 已因致命故障停止")
             if self._started:
                 return
-        if self._readiness_check is not None:
-            self._readiness_check()
         with self._lock:
             self._stop_event.clear()
             self._worker = threading.Thread(
@@ -350,7 +345,6 @@ class TaskRunner:
 
             result = self._actions.execute(
                 task.task_type,
-                item_id=order.item_id,
                 target_id=order.target_id,
             )
             if self._stop_event.is_set():
@@ -375,7 +369,7 @@ class TaskRunner:
                     self._state_changed.notify_all()
                 return
             if result.status is TaskStatus.PAUSED:
-                self._pause_order(order, task, result.pause_reason, result.message)
+                self._pause_order(order, task, result.error_code, result.message)
                 return
             raise RuntimeError(f"不支持的任务执行结果: {result.status}")
 
@@ -385,15 +379,15 @@ class TaskRunner:
             order.updated_at = time.time()
             self._state_changed.notify_all()
 
-    def _pause_order(self, order, task, reason, message) -> None:
+    def _pause_order(self, order, task, error_code, message) -> None:
         """让 Worker 原地等待，直到收到取消请求或系统发生致命故障。"""
 
         with self._state_changed:
             task.status = TaskStatus.PAUSED
-            task.pause_reason = reason
+            task.error_code = error_code
             task.message = message
             order.status = OrderStatus.PAUSED
-            order.pause_reason = reason
+            order.error_code = error_code
             order.message = message
             order.updated_at = time.time()
             self._state_changed.notify_all()
@@ -409,11 +403,11 @@ class TaskRunner:
             return
         with self._state_changed:
             task.status = TaskStatus.CANCELLED
-            task.pause_reason = None
+            task.error_code = None
             task.message = "暂停订单已回到初始位并取消"
             order.skip_unstarted_tasks()
             order.status = OrderStatus.CANCELLED
-            order.pause_reason = None
+            order.error_code = None
             order.message = task.message
             order.updated_at = time.time()
             self._state_changed.notify_all()

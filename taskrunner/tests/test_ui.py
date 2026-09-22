@@ -26,7 +26,6 @@ def make_order(order_id: str = "order-1", status: OrderStatus = OrderStatus.QUEU
             task_id=f"{order_id}:{task_type.value}",
             task_type=task_type,
             status=TaskStatus.QUEUED if index == 0 else TaskStatus.BLOCKED,
-            pause_reason=None,
             error_code=None,
             message=None,
         )
@@ -38,8 +37,6 @@ def make_order(order_id: str = "order-1", status: OrderStatus = OrderStatus.QUEU
         target_id="mineral_water",
         status=status,
         tasks=tasks,
-        current_task_type=RobotTaskType.PICK,
-        pause_reason=None,
         error_code=None,
         message=None,
         created_at=time.time(),

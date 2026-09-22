@@ -7,7 +7,6 @@ AGV；识别测试运行时连接测试相机与模拟机器人，明确不创�
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import math
 from pathlib import Path
 import threading
 import time
@@ -16,87 +15,6 @@ from typing import Callable, Iterable
 from taskrunner.monitor import ControllerMonitor
 from taskrunner.orders import HardwareBeverageOrderActions, TestRecognitionOrders
 from taskrunner.runner import TaskRunner
-
-
-INITIAL_JOINTS_DEG = (
-    35.851, -70.067, -84.049, -72.301, -20.318, -54.485, -0.76,
-    -31.083, 65.342, 91.197, 66.982, 13.656, 60.622, -38.768,
-    0.0, 10.0, 45.0, -55.0, 0.0, 0.0,
-)
-
-
-def validate_robot_baseline(
-    robot_state,
-    *,
-    initial_joints_deg: tuple[float, ...] = INITIAL_JOINTS_DEG,
-    joint_tolerance_deg: float = 2.0,
-) -> None:
-    """验证机器人可安全开始执行任务，不包含任何 AGV 条件。"""
-
-    if not math.isfinite(joint_tolerance_deg) or joint_tolerance_deg <= 0:
-        raise ValueError("joint_tolerance_deg 必须大于 0")
-    if not initial_joints_deg or not all(math.isfinite(v) for v in initial_joints_deg):
-        raise ValueError("initial_joints_deg 必须包含有限数值")
-    if robot_state is None:
-        raise RuntimeError("无法读取机器人启动状态")
-    if not bool(getattr(robot_state, "activated", False)):
-        raise RuntimeError("机器人尚未使能")
-    error_code = getattr(robot_state, "error_code", None)
-    if bool(getattr(robot_state, "has_error", False)) or error_code not in (None, 0):
-        raise RuntimeError(f"机器人存在控制器错误，错误码={error_code}")
-    driver_codes = tuple(getattr(robot_state, "driver_error_codes", ()) or ())
-    nonzero_driver_codes = tuple(code for code in driver_codes if code != 0)
-    if nonzero_driver_codes:
-        raise RuntimeError(f"机器人存在驱动器错误，错误码={nonzero_driver_codes}")
-    if bool(getattr(robot_state, "moving", False)):
-        raise RuntimeError("机器人仍在运动，不能启动任务队列")
-
-    actual = getattr(robot_state, "actual_joints_deg", None)
-    try:
-        actual_joints = tuple(float(value) for value in actual)
-    except (TypeError, ValueError, OverflowError) as error:
-        raise RuntimeError("无法读取机器人实际关节角") from error
-    if len(actual_joints) != len(initial_joints_deg) or not all(
-        math.isfinite(value) for value in actual_joints
-    ):
-        raise RuntimeError(
-            f"机器人实际关节角必须包含 {len(initial_joints_deg)} 个有限数值"
-        )
-    deviations = tuple(
-        abs(actual_value - expected_value)
-        for actual_value, expected_value in zip(actual_joints, initial_joints_deg)
-    )
-    if max(deviations, default=0.0) > joint_tolerance_deg:
-        worst_index = max(range(len(deviations)), key=deviations.__getitem__)
-        raise RuntimeError(
-            "机器人不在约定初始位："
-            f"关节 {worst_index + 1} 偏差 {deviations[worst_index]:.3f}°，"
-            f"允许偏差 {joint_tolerance_deg:.3f}°"
-        )
-
-
-def validate_startup_baseline(
-    robot_state,
-    agv_state,
-    *,
-    initial_joints_deg: tuple[float, ...] = INITIAL_JOINTS_DEG,
-    joint_tolerance_deg: float = 2.0,
-    pickup_station_id: int = 4,
-) -> None:
-    """验证正式硬件运行时的机器人基线和 AGV 起始站点。"""
-
-    validate_robot_baseline(
-        robot_state,
-        initial_joints_deg=initial_joints_deg,
-        joint_tolerance_deg=joint_tolerance_deg,
-    )
-    if agv_state is None:
-        raise RuntimeError("无法读取 AGV 启动状态")
-    terminal_station = getattr(agv_state, "terminal_station", None)
-    if terminal_station != pickup_station_id:
-        raise RuntimeError(
-            f"AGV 必须停在站点 {pickup_station_id}，当前终到站点={terminal_station}"
-        )
 
 
 def _close_resources(resources: Iterable[object | None]) -> None:
@@ -175,7 +93,6 @@ def create_hardware_runtime(
     agv_port: int = 9201,
     agv_device_id: int = 1,
     queue_capacity: int = 10,
-    joint_tolerance_deg: float = 2.0,
     monitor_interval_s: float = 0.02,
     on_fatal: Callable[[Exception], None] | None = None,
 ) -> HardwareRuntime:
@@ -239,18 +156,10 @@ def create_hardware_runtime(
         )
         monitor = ControllerMonitor(monitor_robot.get_robot_state, interval_s=monitor_interval_s)
 
-        def readiness_check() -> None:
-            validate_startup_baseline(
-                robot.get_robot_state(),
-                agv.get_state(),
-                joint_tolerance_deg=joint_tolerance_deg,
-            )
-
         runner = TaskRunner(
             actions,
             queue_capacity=queue_capacity,
             monitor=monitor,
-            readiness_check=readiness_check,
             on_fatal=on_fatal,
         )
         return HardwareRuntime(runner, robot, monitor_robot, camera, snapshot_command, agv)
@@ -265,7 +174,6 @@ def create_recognition_test_runtime(
     robot_ip: str = "192.168.110.77",
     camera_name: str = "left",
     queue_capacity: int = 10,
-    joint_tolerance_deg: float = 2.0,
     monitor_interval_s: float = 0.02,
     stage_delay_s: float = 3.0,
     on_fatal: Callable[[Exception], None] | None = None,
@@ -323,31 +231,23 @@ def create_recognition_test_runtime(
         snapshot_command.initialize_resources()
 
         robot_executor = RobotCommandExecutor(robot)
-        # pick_workflow = TestRecognitionWorkflow(
-        #     robot=robot,
-        #     robot_executor=robot_executor,
-        #     snapshot_command=snapshot_command,
-        # )
+        pick_workflow = TestRecognitionWorkflow(
+            robot=robot,
+            robot_executor=robot_executor,
+            snapshot_command=snapshot_command,
+        )
         actions = TestRecognitionOrders(
-            # pick_workflow=pick_workflow,
+            pick_workflow=pick_workflow,
             robot_executor=robot_executor,
             stage_delay_s=stage_delay_s,
         )
         monitor = ControllerMonitor(monitor_robot.get_robot_state, interval_s=monitor_interval_s)
         robot_executor.move_init_pose()
 
-        def readiness_check() -> None:
-            return  # 测试环境不验证机器人基线，避免模拟器与真实机器人差异导致的误报。
-            # validate_robot_baseline(
-            #     robot.get_robot_state(),
-            #     joint_tolerance_deg=joint_tolerance_deg,
-            # )
-
         runner = TaskRunner(
             actions,
             queue_capacity=queue_capacity,
             monitor=monitor,
-            readiness_check=readiness_check,
             on_fatal=on_fatal,
         )
         return RecognitionTestRuntime(runner, robot, monitor_robot, camera, snapshot_command)

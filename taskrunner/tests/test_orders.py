@@ -1,21 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 import unittest
 
 from taskrunner.errors import FatalExecutionError
 from taskrunner.orders import HardwareBeverageOrderActions, TestRecognitionOrders
 from taskrunner.taskrunner_contracts import (
-    PauseReason,
     RobotTaskType,
     TaskStatus,
 )
+from workflows.pick_result import PickWorkflowResult, PickWorkflowStatus
 
 
 class FakePickWorkflow:
-    def __init__(self, result=0) -> None:
-        self.result = result
+    def __init__(self, result=None) -> None:
+        self.result = result or PickWorkflowResult(PickWorkflowStatus.SUCCEEDED)
         self.calls: list[tuple[int, str]] = []
 
     def execute(self, model_id: int, target_id: str):
@@ -64,20 +63,8 @@ class FakeAgv:
         return FakeNavigationResult(self.success, "navigation failed")
 
 
-class WorkflowStatus(str, Enum):
-    OUT_OF_STOCK = "out_of_stock"
-    PAUSED = "paused"
-
-
-@dataclass
-class StructuredWorkflowResult:
-    status: WorkflowStatus
-    pause_reason: str | None = None
-    message: str | None = None
-
-
 class HardwareBeverageOrderActionsTests(unittest.TestCase):
-    def make_actions(self, workflow_result=0, *, agv_success: bool = True):
+    def make_actions(self, workflow_result=None, *, agv_success: bool = True):
         workflow = FakePickWorkflow(workflow_result)
         robot = FakeRobotExecutor()
         hand = FakeHandExecutor()
@@ -96,7 +83,6 @@ class HardwareBeverageOrderActionsTests(unittest.TestCase):
         for task_type in RobotTaskType:
             result = actions.execute(
                 task_type,
-                item_id="water",
                 target_id="mineral_water",
             )
             self.assertEqual(result.status, TaskStatus.SUCCEEDED)
@@ -117,14 +103,13 @@ class HardwareBeverageOrderActionsTests(unittest.TestCase):
 
     def test_structured_out_of_stock_result(self) -> None:
         actions, *_ = self.make_actions(
-            StructuredWorkflowResult(
-                WorkflowStatus.OUT_OF_STOCK,
+            PickWorkflowResult(
+                PickWorkflowStatus.OUT_OF_STOCK,
                 message="first detection missed",
             )
         )
         result = actions.execute(
             RobotTaskType.PICK,
-            item_id="water",
             target_id="mineral_water",
         )
         self.assertEqual(result.status, TaskStatus.FAILED)
@@ -132,35 +117,31 @@ class HardwareBeverageOrderActionsTests(unittest.TestCase):
 
     def test_structured_pause_result(self) -> None:
         actions, *_ = self.make_actions(
-            StructuredWorkflowResult(
-                WorkflowStatus.PAUSED,
-                pause_reason=PauseReason.TARGET_UNREACHABLE.value,
+            PickWorkflowResult(
+                PickWorkflowStatus.TARGET_UNREACHABLE,
+                message="unreachable",
             )
         )
         result = actions.execute(
             RobotTaskType.PICK,
-            item_id="water",
             target_id="mineral_water",
         )
         self.assertEqual(result.status, TaskStatus.PAUSED)
-        self.assertEqual(result.pause_reason, PauseReason.TARGET_UNREACHABLE)
+        self.assertEqual(result.error_code, "target_unreachable")
 
-    def test_legacy_failure_is_not_misclassified_as_pause(self) -> None:
-        actions, *_ = self.make_actions(1)
-        result = actions.execute(
-            RobotTaskType.PICK,
-            item_id="water",
-            target_id="mineral_water",
-        )
-        self.assertEqual(result.status, TaskStatus.FAILED)
-        self.assertEqual(result.error_code, "pick_failed")
+    def test_invalid_workflow_result_is_fatal(self) -> None:
+        actions, *_ = self.make_actions(object())
+        with self.assertRaisesRegex(FatalExecutionError, "PickWorkflowResult"):
+            actions.execute(
+                RobotTaskType.PICK,
+                target_id="mineral_water",
+            )
 
     def test_agv_failure_is_fatal(self) -> None:
         actions, *_ = self.make_actions(agv_success=False)
         with self.assertRaisesRegex(FatalExecutionError, "navigation failed"):
             actions.execute(
                 RobotTaskType.TRANSPORT_TO_DROPOFF,
-                item_id="water",
                 target_id="mineral_water",
             )
 
@@ -173,7 +154,7 @@ class HardwareBeverageOrderActionsTests(unittest.TestCase):
 
 
 class TestRecognitionOrdersTests(unittest.TestCase):
-    def make_actions(self, workflow_result=0, *, model_id: int = 0):
+    def make_actions(self, workflow_result=None, *, model_id: int = 0):
         workflow = FakePickWorkflow(workflow_result)
         robot = FakeRobotExecutor()
         actions = TestRecognitionOrders(
@@ -190,7 +171,6 @@ class TestRecognitionOrdersTests(unittest.TestCase):
         for task_type in RobotTaskType:
             result = actions.execute(
                 task_type,
-                item_id="water",
                 target_id="mineral_water",
             )
             self.assertEqual(result.status, TaskStatus.SUCCEEDED)
@@ -201,21 +181,19 @@ class TestRecognitionOrdersTests(unittest.TestCase):
             [
                 ("transport", None),
                 ("place", None),
-                ("offset", (1, [35.5, 0, 0])),
                 ("init", None),
             ],
         )
 
     def test_pick_results_use_shared_normalization(self) -> None:
         actions, *_ = self.make_actions(
-            StructuredWorkflowResult(
-                WorkflowStatus.OUT_OF_STOCK,
+            PickWorkflowResult(
+                PickWorkflowStatus.OUT_OF_STOCK,
                 message="first detection missed",
             )
         )
         result = actions.execute(
             RobotTaskType.PICK,
-            item_id="water",
             target_id="mineral_water",
         )
         self.assertEqual(result.status, TaskStatus.FAILED)

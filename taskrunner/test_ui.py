@@ -181,7 +181,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--robot-ip", default="192.168.110.77")
     parser.add_argument("--camera", default="left")
     parser.add_argument("--queue-capacity", type=int, default=10)
-    parser.add_argument("--joint-tolerance-deg", type=float, default=2.0)
     parser.add_argument("--monitor-interval", type=float, default=0.02)
     parser.add_argument("--stage-delay", type=float, default=3.0)
     return parser
@@ -206,7 +205,6 @@ def main(argv: list[str] | None = None) -> int:
         robot_ip=args.robot_ip,
         camera_name=args.camera,
         queue_capacity=args.queue_capacity,
-        joint_tolerance_deg=args.joint_tolerance_deg,
         monitor_interval_s=args.monitor_interval,
         stage_delay_s=args.stage_delay,
         on_fatal=on_fatal,

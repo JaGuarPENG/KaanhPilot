@@ -15,12 +15,12 @@ from taskrunner.errors import FatalExecutionError
 from taskrunner.taskrunner_contracts import (
     OrderSnapshot,
     OrderStatus,
-    PauseReason,
     RobotTaskSnapshot,
     RobotTaskType,
     TaskExecutionResult,
     TaskStatus,
 )
+from workflows.pick_result import PickWorkflowResult, PickWorkflowStatus
 
 
 BEVERAGE_TARGET_IDS = {
@@ -40,50 +40,29 @@ class BeverageOrderActions(Protocol):
     """
 
     def execute(
-        self, task_type: RobotTaskType, *, item_id: str, target_id: str
+        self, task_type: RobotTaskType, *, target_id: str
     ) -> TaskExecutionResult: ...
 
     def cancel_paused_pick(self) -> None: ...
 
 
-def normalize_pick_result(raw_result: Any) -> TaskExecutionResult:
-    """把抓取 Workflow 的不同结果形式转换为 Runner 统一契约。
+def pick_result_to_task_result(result: PickWorkflowResult) -> TaskExecutionResult:
+    """把抓取业务结果严格映射为 Runner 的通用任务结果。"""
 
-    结构化 Workflow 通过 ``status``、``pause_reason`` 和 ``message`` 暴露
-    结果。整数分支仅用于兼容尚未迁移完成的旧 Workflow。
-    """
-
-    if isinstance(raw_result, TaskExecutionResult):
-        return raw_result
-    if raw_result == 0:
-        return TaskExecutionResult.succeeded()
-    if isinstance(raw_result, int):
-        return TaskExecutionResult.failed(
-            "pick_failed",
-            "旧版 TwoStagePickWorkflow 未提供可区分的失败原因",
+    if not isinstance(result, PickWorkflowResult):
+        raise FatalExecutionError(
+            f"抓取 Workflow 必须返回 PickWorkflowResult，收到 {type(result).__name__}"
         )
-
-    status = getattr(raw_result, "status", None)
-    status_value = getattr(status, "value", status)
-    if status_value in ("succeeded", "success"):
-        return TaskExecutionResult.succeeded(getattr(raw_result, "message", None))
-    if status_value == "out_of_stock":
-        return TaskExecutionResult.failed(
-            "out_of_stock", getattr(raw_result, "message", None)
-        )
-    if status_value == "paused":
-        raw_reason = getattr(raw_result, "pause_reason", None)
-        reason_value = getattr(raw_reason, "value", raw_reason)
-        try:
-            reason = PauseReason(reason_value)
-        except (TypeError, ValueError) as error:
-            raise FatalExecutionError(
-                f"Workflow 返回未知暂停原因: {reason_value!r}"
-            ) from error
-        return TaskExecutionResult.paused(
-            reason, getattr(raw_result, "message", None)
-        )
-    raise FatalExecutionError(f"Workflow 返回未知结果: {raw_result!r}")
+    if result.status is PickWorkflowStatus.SUCCEEDED:
+        return TaskExecutionResult.succeeded(result.message)
+    if result.status is PickWorkflowStatus.OUT_OF_STOCK:
+        return TaskExecutionResult.failed(result.status.value, result.message)
+    if result.status in {
+        PickWorkflowStatus.SECOND_DETECTION_FAILED,
+        PickWorkflowStatus.TARGET_UNREACHABLE,
+    }:
+        return TaskExecutionResult.paused(result.status.value, result.message)
+    raise FatalExecutionError(f"Workflow 返回未知抓取状态: {result.status!r}")
 
 
 @dataclass(slots=True)
@@ -93,7 +72,6 @@ class RobotTask:
     task_id: str
     task_type: RobotTaskType
     status: TaskStatus
-    pause_reason: PauseReason | None = None
     error_code: str | None = None
     message: str | None = None
 
@@ -104,7 +82,6 @@ class RobotTask:
             task_id=self.task_id,
             task_type=self.task_type,
             status=self.status,
-            pause_reason=self.pause_reason,
             error_code=self.error_code,
             message=self.message,
         )
@@ -119,7 +96,6 @@ class BeverageOrder:
     target_id: str
     status: OrderStatus = OrderStatus.QUEUED
     tasks: list[RobotTask] = field(default_factory=list)
-    pause_reason: PauseReason | None = None
     error_code: str | None = None
     message: str | None = None
     created_at: float = field(default_factory=time.time)
@@ -169,15 +145,12 @@ class BeverageOrder:
     def snapshot(self) -> OrderSnapshot:
         """生成包含完整任务链的不可变订单快照。"""
 
-        current = self.current_task()
         return OrderSnapshot(
             order_id=self.order_id,
             item_id=self.item_id,
             target_id=self.target_id,
             status=self.status,
             tasks=tuple(task.snapshot() for task in self.tasks),
-            current_task_type=None if current is None else current.task_type,
-            pause_reason=self.pause_reason,
             error_code=self.error_code,
             message=self.message,
             created_at=self.created_at,
@@ -214,17 +187,17 @@ class HardwareBeverageOrderActions:
         self._pickup_station_id = pickup_station_id
 
     def execute(
-        self, task_type: RobotTaskType, *, item_id: str, target_id: str
+        self, task_type: RobotTaskType, *, target_id: str
     ) -> TaskExecutionResult:
         """执行一个固定阶段，并返回其正常结果。
 
-        ``item_id`` 用于业务追踪；抓取实际使用映射后的 ``target_id``。
-        运输、放置、复位任何异常都不得降级成暂停。
+        抓取使用订单预先映射出的 ``target_id``；运输、放置、复位任何异常
+        都不得降级成暂停。
         """
 
         if task_type is RobotTaskType.PICK:
-            raw_result = self._pick_workflow.execute(self._model_id, target_id)
-            return normalize_pick_result(raw_result)
+            result = self._pick_workflow.execute(self._model_id, target_id)
+            return pick_result_to_task_result(result)
         if task_type is RobotTaskType.TRANSPORT_TO_DROPOFF:
             self._robot_executor.move_transport_pose()
             self._navigate_to(self._dropoff_station_id)
@@ -254,12 +227,6 @@ class HardwareBeverageOrderActions:
             message = getattr(result, "message", None) or f"AGV 未能到达站点 {station_id}"
             raise FatalExecutionError(message)
 
-    @staticmethod
-    def _normalize_pick_result(raw_result: Any) -> TaskExecutionResult:
-        """兼容原有测试和调用方；新代码应使用模块级转换函数。"""
-
-        return normalize_pick_result(raw_result)
-
 
 class TestRecognitionOrders:
     """识别测试环境使用的四阶段订单动作适配器。
@@ -275,7 +242,7 @@ class TestRecognitionOrders:
     def __init__(
         self,
         *,
-        # pick_workflow: Any,
+        pick_workflow: Any,
         robot_executor: Any,
         model_id: int = 0,
         stage_delay_s: float = 3.0,
@@ -284,24 +251,23 @@ class TestRecognitionOrders:
             raise ValueError("model_id 只能是 0 或 1")
         if stage_delay_s < 0:
             raise ValueError("stage_delay_s 不能为负数")
-        # self._pick_workflow = pick_workflow
+        self._pick_workflow = pick_workflow
         self._robot_executor = robot_executor
         self._model_id = model_id
         self._stage_delay_s = stage_delay_s
 
     def execute(
-        self, task_type: RobotTaskType, *, item_id: str, target_id: str
+        self, task_type: RobotTaskType, *, target_id: str
     ) -> TaskExecutionResult:
         """执行一个固定阶段，并返回其正常结果。
 
-        ``item_id`` 用于业务追踪；抓取实际使用映射后的 ``target_id``。
-        运输、放置、复位任何异常都不得降级成暂停。
+        抓取使用订单预先映射出的 ``target_id``；运输、放置、复位任何异常
+        都不得降级成暂停。
         """
 
         if task_type is RobotTaskType.PICK:
-            # raw_result = self._pick_workflow.execute(self._model_id, target_id)
-            # return normalize_pick_result(raw_result)
-            return TaskExecutionResult.succeeded("模拟抓取完成")
+            result = self._pick_workflow.execute(self._model_id, target_id)
+            return pick_result_to_task_result(result)
         if task_type is RobotTaskType.TRANSPORT_TO_DROPOFF:
             self._robot_executor.move_transport_pose()
             time.sleep(self._stage_delay_s)
@@ -321,9 +287,3 @@ class TestRecognitionOrders:
         """暂停抓取的唯一首版取消恢复动作：机械臂回约定初始位。"""
 
         self._robot_executor.move_init_pose()
-
-    @staticmethod
-    def _normalize_pick_result(raw_result: Any) -> TaskExecutionResult:
-        """兼容原有测试；实际转换由模块级函数统一实现。"""
-
-        return normalize_pick_result(raw_result)

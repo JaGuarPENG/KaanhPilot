@@ -2,43 +2,18 @@
 TestRecognitionWorkflow: 测试识别工作流,引入了缺货机制,用以测试taskrunner的整体逻辑
 """
 from __future__ import annotations
-from dataclasses import dataclass
-from enum import Enum
 import time
 import numpy as np
 from commands.robot_commands import RobotCommandExecutor
 from commands.snapshot import SnapShotCommand
 from planner.pose import quaternion_to_rotation
-from robot.kaanh_backend import KaanhRobotBackend, TargetUnreachableError
+from robot.kaanh_backend import KaanhRobotBackend
+from workflows.pick_result import PickWorkflowResult, PickWorkflowStatus
 
 
 SECOND_PHOTO_OFFSET_TOOL_MM = np.asarray((0.0, 20.0, -400.0))
 PREGRASP_OFFSET_TOOL_MM = np.asarray((0.0, 35.0, -285.0))
 FINAL_APPROACH_OFFSET_TOOL_MM = np.asarray((0.0, 0.0, 120.0))
-
-
-class PickWorkflowStatus(str, Enum):
-    SUCCEEDED = "succeeded"
-    OUT_OF_STOCK = "out_of_stock"
-    PAUSED = "paused"
-
-
-class PickPauseReason(str, Enum):
-    SECOND_DETECTION_FAILED = "second_detection_failed"
-    TARGET_UNREACHABLE = "target_unreachable"
-
-
-@dataclass(frozen=True, slots=True, eq=False)
-class PickWorkflowResult:
-    status: PickWorkflowStatus
-    pause_reason: PickPauseReason | None = None
-    message: str | None = None
-
-    def __post_init__(self) -> None:
-        if self.status is PickWorkflowStatus.PAUSED and self.pause_reason is None:
-            raise ValueError("暂停结果必须包含 pause_reason")
-        if self.status is not PickWorkflowStatus.PAUSED and self.pause_reason is not None:
-            raise ValueError("非暂停结果不能包含 pause_reason")
 
 
 class TestRecognitionWorkflow:
@@ -103,8 +78,7 @@ class TestRecognitionWorkflow:
             message = f"第二次拍照未检测到目标 {target_id}，等待人工处理"
             print(f"[抓取] {message}。")
             return PickWorkflowResult(
-                PickWorkflowStatus.PAUSED,
-                PickPauseReason.SECOND_DETECTION_FAILED,
+                PickWorkflowStatus.SECOND_DETECTION_FAILED,
                 message,
             )
 

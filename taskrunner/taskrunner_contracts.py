@@ -58,23 +58,8 @@ class RobotTaskType(str, Enum):
     RETURN_AND_RESET = "return_and_reset"
 
 
-class PauseReason(str, Enum):
-    """允许人工介入、但不属于机器人致命故障的暂停原因。"""
-
-    SECOND_DETECTION_FAILED = "second_detection_failed"
-    TARGET_UNREACHABLE = "target_unreachable"
-
-
 TERMINAL_ORDER_STATUSES = frozenset(
     {OrderStatus.SUCCEEDED, OrderStatus.FAILED, OrderStatus.CANCELLED}
-)
-TERMINAL_TASK_STATUSES = frozenset(
-    {
-        TaskStatus.SUCCEEDED,
-        TaskStatus.FAILED,
-        TaskStatus.CANCELLED,
-        TaskStatus.SKIPPED,
-    }
 )
 
 
@@ -90,7 +75,6 @@ class TaskExecutionResult:
     status: TaskStatus
     error_code: str | None = None
     message: str | None = None
-    pause_reason: PauseReason | None = None
 
     def __post_init__(self) -> None:
         if self.status not in {
@@ -99,10 +83,10 @@ class TaskExecutionResult:
             TaskStatus.PAUSED,
         }:
             raise ValueError("TaskExecutionResult 只能表示 SUCCEEDED、FAILED 或 PAUSED")
-        if self.status is TaskStatus.PAUSED and self.pause_reason is None:
-            raise ValueError("PAUSED 结果必须包含 pause_reason")
-        if self.status is not TaskStatus.PAUSED and self.pause_reason is not None:
-            raise ValueError("非 PAUSED 结果不能包含 pause_reason")
+        if self.status is TaskStatus.SUCCEEDED and self.error_code is not None:
+            raise ValueError("SUCCEEDED 结果不能包含 error_code")
+        if self.status in {TaskStatus.FAILED, TaskStatus.PAUSED} and not self.error_code:
+            raise ValueError("FAILED 或 PAUSED 结果必须包含 error_code")
 
     @classmethod
     def succeeded(cls, message: str | None = None) -> "TaskExecutionResult":
@@ -120,11 +104,11 @@ class TaskExecutionResult:
 
     @classmethod
     def paused(
-        cls, reason: PauseReason, message: str | None = None
+        cls, error_code: str, message: str | None = None
     ) -> "TaskExecutionResult":
         """构造等待人工处理的暂停结果。"""
 
-        return cls(TaskStatus.PAUSED, message=message, pause_reason=reason)
+        return cls(TaskStatus.PAUSED, error_code=error_code, message=message)
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +118,6 @@ class RobotTaskSnapshot:
     task_id: str
     task_type: RobotTaskType
     status: TaskStatus
-    pause_reason: PauseReason | None
     error_code: str | None
     message: str | None
 
@@ -148,8 +131,6 @@ class OrderSnapshot:
     target_id: str
     status: OrderStatus
     tasks: tuple[RobotTaskSnapshot, ...]
-    current_task_type: RobotTaskType | None
-    pause_reason: PauseReason | None
     error_code: str | None
     message: str | None
     created_at: float

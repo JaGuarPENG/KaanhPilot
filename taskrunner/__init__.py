@@ -9,7 +9,6 @@ from taskrunner.runner import TaskRunner
 from taskrunner.taskrunner_contracts import (
     OrderSnapshot,
     OrderStatus,
-    PauseReason,
     QueueSnapshot,
     RobotTaskSnapshot,
     RobotTaskType,
@@ -21,7 +20,6 @@ from taskrunner.taskrunner_contracts import (
 __all__ = [
     "OrderSnapshot",
     "OrderStatus",
-    "PauseReason",
     "QueueSnapshot",
     "RobotTaskSnapshot",
     "RobotTaskType",
