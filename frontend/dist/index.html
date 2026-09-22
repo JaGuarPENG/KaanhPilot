@@ -12,7 +12,9 @@
   <link rel="stylesheet" href="cameras.css?v=binary-stock-1">
   <link rel="stylesheet" href="inventory.css?v=binary-stock-1">
   <script src="config.js?v=dual-camera-2" defer></script>
-  <script src="app.js?v=coffee-gateway-1" defer></script>
+  <link rel="stylesheet" href="queue.css?v=orders-1">
+  <script src="queue-model.js?v=orders-1" defer></script>
+  <script src="app.js?v=orders-1" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -163,12 +165,19 @@
         <div class="task-main">
           <div class="status-symbol" id="status-symbol" aria-hidden="true"><span class="idle-symbol"></span></div>
           <div class="task-copy" role="status" aria-live="polite" aria-atomic="true"><h2 id="status-title">准备好，为你取来。</h2><p id="status-detail">选择上方饮料，体验一次抓取流程。</p></div>
-          <button id="stop-button" class="stop-button" disabled><span aria-hidden="true">■</span> 停止任务</button>
+          <button id="stop-button" class="stop-button" disabled>取消订单</button>
         </div>
         <div class="task-progress" id="task-progress" hidden>
-          <ol aria-label="任务进度"><li data-step="1">确认库存</li><li data-step="2">执行抓取</li><li data-step="3">放置完成</li></ol>
+          <ol aria-label="任务进度"><li data-step="1">抓取</li><li data-step="2">运输</li><li data-step="3">放置</li><li data-step="4">返回复位</li></ol>
           <div class="progress-track"><div id="progress-fill"></div></div>
         </div>
+        <div class="queue-panel" id="queue-panel" hidden>
+          <div class="queue-heading"><h3>任务队列</h3><span id="queue-count"></span></div>
+          <p id="queue-note" class="queue-note" hidden></p>
+          <ol id="queue-list" class="queue-list" aria-label="当前及等待订单"></ol>
+        </div>
+        <details class="recent-orders"><summary>本页最近订单</summary><ol id="recent-orders" class="queue-list"></ol></details>
+        <div id="uncertain-panel" class="queue-note" hidden><p>提交结果不明，请核对队列与设备结果。不会自动重发订单。</p><button id="uncertain-confirm" type="button">已核对，继续下单</button></div>
       </section>
       <section id="inventory-test" class="inventory-test" aria-labelledby="inventory-test-title" hidden>
         <div class="inventory-test-heading"><h2 id="inventory-test-title">库存测试</h2><span>模拟模式</span></div>
@@ -179,19 +188,17 @@
             <option value="americano">美式</option><option value="latte">拿铁</option><option value="cappuccino">卡布奇诺</option>
           </select></label>
           <label>测试场景<select id="inventory-test-scenario" name="scenario">
-            <option value="available">有库存</option><option value="sold-out">已售尽</option><option value="confirmation-empty">确认时才发现售尽</option>
+            <option value="available">有库存</option><option value="sold-out">已售尽</option><option value="confirmation-empty">确认时才发现售尽</option><option value="paused">二次识别暂停</option><option value="fatal">控制器故障</option>
           </select></label>
           <button id="inventory-test-apply" type="submit">应用</button>
         </form>
-        <p id="inventory-test-feedback" role="status">选择商品与场景后应用，库存会同步到所有页面。</p>
+        <p id="inventory-test-feedback" role="status">设置下一单的模拟场景，库存结果由 Runner 执行后返回。</p>
       </section>
     </main>
-    <dialog id="sold-out-dialog" class="stock-dialog" aria-labelledby="sold-out-title" aria-describedby="sold-out-description">
-      <span class="stock-dialog-mark" aria-hidden="true">—</span>
-      <h2 id="sold-out-title">该商品已售尽</h2>
-      <p id="sold-out-description">这次未进行抓取，请选择其他商品。</p>
-      <form method="dialog"><button id="sold-out-dismiss" autofocus>选择其他商品</button></form>
-    </dialog>
+    <section class="inventory-test" id="restock-panel" hidden>
+      <form id="restock-form" class="inventory-test-form"><label>补货确认<select id="restock-item"></select></label><button type="submit">设为待检测</button></form>
+      <p id="restock-feedback">仅清除本页售罄提示；补货后允许下一单重新检测。</p>
+    </section>
     <footer><span>KAANH</span></footer>
   </div>
 </body>

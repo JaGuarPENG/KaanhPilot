@@ -1,9 +1,8 @@
 {
-  "python_executable": "C:/Users/11051/miniconda3/envs/pyagent/python.exe",
-  "api_token": "test",
+  "python_executable": "D:/anaconda3/envs/pyagent/python.exe",
   "host": "0.0.0.0",
   "port": 9090,
-  "dry_run": false,
+  "dry_run": true,
   "simulation_tasks_file": "data/launcher_dryrun_tasks.json",
   "robot_tasks_file": "data/launcher_robot_tasks.json"
 }
