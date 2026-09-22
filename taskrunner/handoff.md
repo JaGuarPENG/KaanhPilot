@@ -1,224 +1,187 @@
-# TaskRunner 公开方法交接说明
+# TaskRunner 接口交接文档
 
-本文档只介绍 `TaskRunner` 对外公开的 Python 方法、数据结构和调用示例，不涉及测试 UI 或 HTTP 适配层。
+本文只描述当前 `taskrunner` 模块提供的 Python 接口、数据契约和调用规则。
 
-入口：
+## 1. 公共导入
 
-```python
-from taskrunner import TaskRunner
-```
-
-## 1. 公开方法总览
-
-`TaskRunner` 当前有以下公开方法：
-
-| 方法 | 用途 | 主要调用方 |
-| --- | --- | --- |
-| `start()` | 启动 Runner、Worker 和控制器监控 | 程序宿主 |
-| `shutdown()` | 在安全条件下永久关闭 Runner | 程序宿主 |
-| `submit_beverage(item_id)` | 提交一个饮料订单 | 业务层 |
-| `get_status()` | 查询 Runner 全局状态 | 业务层 |
-| `get_queue()` | 查询当前订单和 FIFO 等待队列 | 业务层 |
-| `get_order(order_id)` | 查询指定订单的完整快照 | 业务层 |
-| `cancel_order(order_id)` | 取消排队或暂停中的订单 | 业务层 |
-| `report_fatal(error)` | 向 Runner 报告致命故障 | 控制器监控或宿主 |
-
-业务层通常只需要使用：
+常规调用方可以直接从 `taskrunner` 导入主要类型：
 
 ```python
-runner.get_status()
-runner.get_queue()
-runner.get_order(order_id)
-runner.submit_beverage(item_id)
-runner.cancel_order(order_id)
+from taskrunner import (
+    OrderSnapshot,
+    OrderStatus,
+    QueueSnapshot,
+    RobotTaskSnapshot,
+    RobotTaskType,
+    RunnerState,
+    RunnerStatusSnapshot,
+    TaskRunner,
+    TaskStatus,
+)
 ```
 
-`start()`、`shutdown()` 和 `report_fatal()` 属于运行时生命周期接口，不应由普通页面操作直接触发。
+异常类型位于：
 
-## 2. 创建与启动
+```python
+from taskrunner.errors import TaskRunnerError
+```
 
-### 构造函数
+运行时工厂位于：
+
+```python
+from taskrunner.runtime import (
+    create_hardware_runtime,
+    create_recognition_test_runtime,
+)
+```
+
+## 2. TaskRunner 构造
 
 ```python
 TaskRunner(
     actions,
     *,
-    queue_capacity=10,
+    queue_capacity: int = 10,
     monitor=None,
     on_fatal=None,
     order_id_factory=None,
 )
 ```
 
-参数：
+参数含义：
 
-- `actions`：订单动作适配器，实现四阶段任务和暂停取消回位。
-- `queue_capacity`：FIFO 等待队列最大长度；当前正在执行的订单不占用该容量。
-- `monitor`：可选的独立控制器监控器。
-- `on_fatal`：发生首个致命故障后的宿主回调，通常用于关闭硬件资源。
-- `order_id_factory`：可选订单 ID 生成器；默认生成 UUID 字符串。
+- `actions`：饮料订单动作适配器，必须实现本文第 10 节的动作接口。
+- `queue_capacity`：等待队列容量，必须是正整数。当前正在执行的订单不占用该容量。
+- `monitor`：可选的 `ControllerMonitor`。Runner 启动和关闭时会同步管理它。
+- `on_fatal`：可选回调，签名为 `Callable[[Exception], None]`。首次致命故障时调用。
+- `order_id_factory`：可选的订单 ID 生成函数，主要用于测试；默认生成 UUID 字符串。
 
-通常不应由业务层自己拼装硬件对象，而应使用 `taskrunner.runtime` 提供的运行时工厂，然后取得其中的 `runner`。
+Runner 的订单、任务和队列状态只保存在当前进程内，不会持久化。
+
+## 3. 生命周期接口
 
 ### `start() -> None`
 
-启动唯一订单 Worker 和可选控制器监控。
+启动唯一订单 Worker，并启动可选的控制器监控。
 
 ```python
-runtime = create_hardware_runtime(config_dir=config_dir)
-runner = runtime.runner
 runner.start()
 ```
 
-行为：
+调用规则：
 
-- 重复调用已启动 Runner 的 `start()` 是幂等的。
-- Runner 关闭后不能重新启动。
-- Runner 发生致命故障后不能重新启动。
+- 第一次成功启动后，Runner 才允许接单。
+- 对已启动的 Runner 重复调用是幂等的。
+- 已正常关闭或已进入 `FAULTED` 的 Runner 不能重新启动，需要重新构造运行时。
 
-## 3. 查询 Runner 全局状态
+### `shutdown() -> None`
+
+永久关闭 Runner、等待队列和控制器监控。
+
+```python
+runner.shutdown()
+```
+
+调用规则：
+
+- 正常状态下存在当前订单或等待订单时，抛出 `RunnerBusyError`。
+- 致命故障后允许立即关闭。
+- 已关闭后不能再次启动或提交订单。
+- 该方法只管理 Runner 和监控，不代替 `runtime.close()` 关闭机器人、相机或 AGV。
+
+## 4. 提交订单
+
+### `submit_beverage(item_id: str) -> OrderSnapshot`
+
+提交一个饮料订单，并返回提交完成瞬间的只读快照。
+
+```python
+order = runner.submit_beverage("water")
+print(order.order_id)
+print(order.status)  # OrderStatus.QUEUED
+```
+
+当前支持：
+
+| `item_id` | 内部视觉目标 `target_id` |
+| --- | --- |
+| `water` | `mineral_water` |
+| `cola` | `coco_cola` |
+| `oolong_tea` | `oolong_tea` |
+
+调用规则：
+
+- 必须先调用 `start()`。
+- 等待队列已满时抛出 `QueueFullError`。
+- 不支持的商品抛出 `UnsupportedBeverageError`。
+- Runner 已关闭或发生致命故障时抛出 `RunnerStoppedError`。
+- 每个订单固定创建四个任务：抓取、运输、放置、返回复位。
+
+## 5. 查询接口
 
 ### `get_status() -> RunnerStatusSnapshot`
 
-返回 Runner 生命周期、是否允许接单以及首个致命错误。
+返回 Runner 的生命周期状态、接单能力和致命故障信息。
 
 ```python
 status = runner.get_status()
 
-print(status.state.value)
+print(status.state)
 print(status.accepting_orders)
 print(status.fatal_error_type)
 print(status.fatal_error_message)
 ```
 
-返回结构：
+`RunnerStatusSnapshot` 字段：
 
 ```python
-RunnerStatusSnapshot(
-    state=RunnerState.IDLE,
-    accepting_orders=True,
-    fatal_error_type=None,
-    fatal_error_message=None,
-)
+state: RunnerState
+accepting_orders: bool
+fatal_error_type: str | None
+fatal_error_message: str | None
 ```
 
-`state` 可能值：
-
-| 枚举 | 字符串值 | 含义 |
-| --- | --- | --- |
-| `RunnerState.NOT_STARTED` | `not_started` | 尚未调用 `start()` |
-| `RunnerState.IDLE` | `idle` | 已启动，没有当前订单和等待订单 |
-| `RunnerState.RUNNING` | `running` | 存在当前订单或等待订单 |
-| `RunnerState.FAULTED` | `faulted` | 已发生致命故障并停止调度 |
-| `RunnerState.STOPPED` | `stopped` | 已正常关闭 |
-
-是否允许提交订单应直接判断 `accepting_orders`，不要只根据 `state` 推断：
+`RunnerState`：
 
 ```python
-status = runner.get_status()
-if status.accepting_orders:
-    order = runner.submit_beverage("water")
+RunnerState.NOT_STARTED
+RunnerState.IDLE
+RunnerState.RUNNING
+RunnerState.FAULTED
+RunnerState.STOPPED
 ```
 
-等待队列已满时，即使 Runner 正在正常执行，`accepting_orders` 也会是 `False`。
-
-## 4. 提交饮料订单
-
-### `submit_beverage(item_id: str) -> OrderSnapshot`
-
-创建一个订单并加入 FIFO 等待队列，返回提交瞬间的订单快照。
-
-```python
-order = runner.submit_beverage("water")
-
-print(order.order_id)
-print(order.item_id)
-print(order.status.value)
-```
-
-支持的 `item_id`：
-
-| `item_id` | 商品 | 内部识别标签 `target_id` |
-| --- | --- | --- |
-| `water` | 矿泉水 | `mineral_water` |
-| `cola` | 可乐 | `coco_cola` |
-| `oolong_tea` | 乌龙茶 | `oolong_tea` |
-
-完整示例：
-
-```python
-from taskrunner.errors import (
-    QueueFullError,
-    RunnerNotStartedError,
-    RunnerStoppedError,
-    UnsupportedBeverageError,
-)
-
-try:
-    order = runner.submit_beverage("cola")
-except UnsupportedBeverageError:
-    print("不支持该商品")
-except QueueFullError:
-    print("等待队列已满")
-except RunnerNotStartedError:
-    print("Runner 尚未启动")
-except RunnerStoppedError:
-    print("Runner 已停止或已发生致命故障")
-else:
-    print(f"订单已创建: {order.order_id}")
-```
-
-说明：
-
-- 返回的是不可变快照，不是 Runner 内部的可变订单对象。
-- Worker 可能在方法返回后立即领取订单，因此不要长期依赖提交瞬间的状态。
-- 当前所有状态只保存在内存中，进程重启后订单丢失。
-
-## 5. 查询当前订单与队列
+`accepting_orders` 已综合 Runner 是否启动、是否关闭、是否故障以及等待队列是否已满，调用方不需要自行推导。
 
 ### `get_queue() -> QueueSnapshot`
 
-返回当前活动订单以及按 FIFO 排列的等待订单。
+返回当前活动订单和按 FIFO 顺序排列的等待订单。
 
 ```python
 queue = runner.get_queue()
 
-print(f"等待容量: {queue.capacity}")
-print(f"等待数量: {queue.pending_count}")
+print(queue.capacity)
+print(queue.pending_count)
+print(queue.current_order)
 
-if queue.current_order is not None:
-    print(f"当前订单: {queue.current_order.order_id}")
-
-for position, order in enumerate(queue.pending_orders, start=1):
-    print(position, order.order_id, order.item_id, order.status.value)
+for order in queue.pending_orders:
+    print(order.order_id, order.item_id)
 ```
 
-返回结构示例：
+`QueueSnapshot` 字段：
 
 ```python
-QueueSnapshot(
-    capacity=10,
-    current_order=OrderSnapshot(...),
-    pending_orders=(
-        OrderSnapshot(...),
-        OrderSnapshot(...),
-    ),
-)
+capacity: int
+current_order: OrderSnapshot | None
+pending_orders: tuple[OrderSnapshot, ...]
+pending_count: int  # 只读计算属性
 ```
 
-语义：
-
-- `current_order`：正在执行、暂停或执行安全取消回位的订单；没有时为 `None`。
-- `pending_orders`：FIFO 等待订单，只读元组；第一项是下一单。
-- `capacity`：等待队列容量，不包含 `current_order`。
-- `pending_count`：等待订单数量，等价于 `len(pending_orders)`。
-- 成功、失败或取消的终态订单不会继续出现在此快照中。
-
-## 6. 查询指定订单
+终态订单不会出现在 `current_order` 或 `pending_orders` 中。
 
 ### `get_order(order_id: str) -> OrderSnapshot`
 
-根据订单 ID 返回该订单的最新完整快照。
+按订单 ID 查询最新快照。
 
 ```python
 from taskrunner.errors import UnknownOrderError
@@ -226,215 +189,300 @@ from taskrunner.errors import UnknownOrderError
 try:
     order = runner.get_order(order_id)
 except UnknownOrderError:
-    print("当前进程中不存在该订单")
-else:
-    print(order.status.value)
-    print(order.message)
+    print("订单不存在")
 ```
 
-终态订单从 `get_queue()` 消失后，在当前进程退出前仍可通过该方法查询。
+当前实现会在进程退出前保留已经结束的订单，因此终态订单仍可通过该方法查询。
 
-`OrderSnapshot` 字段：
+当前执行任务可以从任务列表中推导：
 
 ```python
-OrderSnapshot(
-    order_id="...",
-    item_id="water",
-    target_id="mineral_water",
-    status=OrderStatus.RUNNING,
-    tasks=(...),
-    error_code=None,
-    message=None,
-    created_at=1789970000.125,
-    updated_at=1789970001.500,
+active_task = next(
+    (
+        task
+        for task in order.tasks
+        if task.status in {
+            TaskStatus.QUEUED,
+            TaskStatus.RUNNING,
+            TaskStatus.PAUSED,
+            TaskStatus.CANCELLING,
+        }
+    ),
+    None,
 )
 ```
 
-时间字段是以秒为单位的 Unix 时间戳。
-
-## 7. 取消订单
+## 6. 取消接口
 
 ### `cancel_order(order_id: str) -> OrderSnapshot`
 
-请求取消订单，并返回请求处理后的最新快照。
+根据订单当前状态请求取消，并返回处理后的快照。
 
 ```python
-from taskrunner.errors import OrderNotCancellableError, UnknownOrderError
-
-try:
-    order = runner.cancel_order(order_id)
-except UnknownOrderError:
-    print("订单不存在")
-except OrderNotCancellableError as error:
-    print(f"当前不能取消: {error}")
-else:
-    print(f"取消请求后的状态: {order.status.value}")
-```
-
-不同状态下的行为：
-
-| 当前订单状态 | 调用结果 |
-| --- | --- |
-| `queued` | 立即从 FIFO 移除并转为 `cancelled` |
-| `paused` | 先转为 `cancelling`；Worker 执行安全回初始位后再转为 `cancelled` |
-| `running` | 抛出 `OrderNotCancellableError` |
-| `cancelling` | 抛出 `OrderNotCancellableError` |
-| `succeeded` / `failed` / `cancelled` | 幂等返回原快照 |
-
-取消暂停订单的完整等待示例：
-
-```python
-import time
-
 order = runner.cancel_order(order_id)
-
-while order.status.value == "cancelling":
-    time.sleep(0.2)
-    order = runner.get_order(order_id)
-
-if order.status.value == "cancelled":
-    print("机器人已完成安全回位，订单已取消")
+print(order.status)
 ```
 
-`cancel_order()` 返回 `cancelling` 时，只表示 Worker 已收到请求，不表示机器人已经回位。
+不同状态的处理规则：
 
-当前没有 `resume(order_id)` 方法。暂停状态只预留了未来恢复设计，目前只能取消暂停订单。
+| 订单状态 | 行为 |
+| --- | --- |
+| `QUEUED` | 从 FIFO 删除，首个任务变为 `CANCELLED`，后续任务变为 `SKIPPED` |
+| `PAUSED` | 先变为 `CANCELLING`，由唯一 Worker 执行安全回位，完成后变为 `CANCELLED` |
+| `RUNNING` | 拒绝取消并抛出 `OrderNotCancellableError` |
+| `CANCELLING` | 拒绝重复请求并抛出 `OrderNotCancellableError` |
+| `SUCCEEDED/FAILED/CANCELLED` | 幂等返回原快照 |
 
-## 8. 订单与任务快照
+当前没有 `resume(order_id)` 接口。
+
+## 7. 订单和任务快照
+
+所有快照均为不可变 dataclass。调用方不能通过快照修改 Runner 内部状态。
 
 ### `OrderSnapshot`
 
 ```python
-order.order_id          # str
-order.item_id           # str
-order.target_id         # str
-order.status            # OrderStatus
-order.tasks             # tuple[RobotTaskSnapshot, ...]
-order.error_code        # str | None
-order.message           # str | None
-order.created_at        # float，Unix 秒
-order.updated_at        # float，Unix 秒
+order.order_id    # str
+order.item_id     # str
+order.target_id   # str
+order.status      # OrderStatus
+order.tasks       # tuple[RobotTaskSnapshot, ...]
+order.error_code  # str | None
+order.message     # str | None
+order.created_at  # float，Unix 秒
+order.updated_at  # float，Unix 秒
 ```
 
 订单状态：
 
 ```python
-OrderStatus.QUEUED       # "queued"
-OrderStatus.RUNNING      # "running"
-OrderStatus.PAUSED       # "paused"
-OrderStatus.CANCELLING   # "cancelling"
-OrderStatus.SUCCEEDED    # "succeeded"
-OrderStatus.FAILED       # "failed"
-OrderStatus.CANCELLED    # "cancelled"
+OrderStatus.QUEUED
+OrderStatus.RUNNING
+OrderStatus.PAUSED
+OrderStatus.CANCELLING
+OrderStatus.SUCCEEDED
+OrderStatus.FAILED
+OrderStatus.CANCELLED
 ```
 
 ### `RobotTaskSnapshot`
 
 ```python
-task.task_id       # str
-task.task_type     # RobotTaskType
-task.status        # TaskStatus
-task.error_code    # str | None
-task.message       # str | None
+task.task_id     # str，例如 "<order_id>:pick"
+task.task_type   # RobotTaskType
+task.status      # TaskStatus
+task.error_code # str | None
+task.message    # str | None
 ```
 
-固定四阶段任务链：
+任务类型：
 
 ```python
-RobotTaskType.PICK                  # "pick"
-RobotTaskType.TRANSPORT_TO_DROPOFF  # "transport_to_dropoff"
-RobotTaskType.PLACE                 # "place"
-RobotTaskType.RETURN_AND_RESET      # "return_and_reset"
+RobotTaskType.PICK
+RobotTaskType.TRANSPORT_TO_DROPOFF
+RobotTaskType.PLACE
+RobotTaskType.RETURN_AND_RESET
 ```
 
 任务状态：
 
 ```python
-TaskStatus.BLOCKED      # "blocked"，等待前序任务成功
-TaskStatus.QUEUED       # "queued"
-TaskStatus.RUNNING      # "running"
-TaskStatus.PAUSED       # "paused"
-TaskStatus.CANCELLING   # "cancelling"
-TaskStatus.SUCCEEDED    # "succeeded"
-TaskStatus.FAILED       # "failed"
-TaskStatus.CANCELLED    # "cancelled"
-TaskStatus.SKIPPED      # "skipped"，因前序失败或取消而不再执行
+TaskStatus.BLOCKED
+TaskStatus.QUEUED
+TaskStatus.RUNNING
+TaskStatus.PAUSED
+TaskStatus.CANCELLING
+TaskStatus.SUCCEEDED
+TaskStatus.FAILED
+TaskStatus.CANCELLED
+TaskStatus.SKIPPED
 ```
 
-抓取阶段可能产生的业务错误代码：
+状态含义：
+
+- `BLOCKED`：等待前序任务成功，尚不具备执行资格。
+- `SKIPPED`：前序任务失败或订单取消，因此确定不再执行。
+- `PAUSED`：等待人工处理；当前版本只能取消，不能恢复。
+- `CANCELLING`：Worker 正在执行暂停订单的安全回位。
+
+## 8. 执行结果和错误代码
+
+动作适配器通过 `TaskExecutionResult` 向 Runner 返回正常的业务结果：
 
 ```python
-"out_of_stock"              # 第一次识别不到目标
-"second_detection_failed"   # 第二次识别不到目标，订单暂停
-"target_unreachable"        # 目标点不可达，订单暂停
+from taskrunner.taskrunner_contracts import TaskExecutionResult
+
+TaskExecutionResult.succeeded("任务完成")
+TaskExecutionResult.failed("out_of_stock", "第一次识别不到目标")
+TaskExecutionResult.paused(
+    "second_detection_failed",
+    "第二次识别不到目标",
+)
 ```
 
-典型结果：
+只有 `SUCCEEDED`、`FAILED` 和 `PAUSED` 可以作为动作执行结果。控制器报警、连接失败等致命问题不应包装为普通结果，而应抛出异常。
 
-- 第一次识别不到目标：订单 `FAILED`，`error_code="out_of_stock"`，后三阶段为 `SKIPPED`。
-- 第二次识别不到目标：订单 `PAUSED`，`error_code="second_detection_failed"`。
-- `movel` 或 `movel_model` 目标不可达：订单 `PAUSED`，`error_code="target_unreachable"`。
-- 致命硬件故障：Runner `FAULTED`，当前订单 `FAILED`，`error_code="fatal_error"`。
+当前抓取错误代码：
 
-## 9. 报告致命故障
+```text
+out_of_stock
+second_detection_failed
+target_unreachable
+fatal_error
+```
+
+对应处理：
+
+- `out_of_stock`：当前抓取任务和订单变为 `FAILED`，后续任务变为 `SKIPPED`，Runner 继续下一单。
+- `second_detection_failed`：当前抓取任务和订单变为 `PAUSED`。
+- `target_unreachable`：当前抓取任务和订单变为 `PAUSED`。
+- `fatal_error`：Runner 进入 `FAULTED` 并停止继续调度。
+
+## 9. 致命故障接口
 
 ### `report_fatal(error: Exception) -> None`
 
-该方法供 `ControllerMonitor` 或运行时宿主调用，不属于普通业务操作。
+该接口供控制器监控或宿主集成代码报告致命故障，普通订单调用方一般不需要调用。
 
 ```python
-try:
-    check_external_controller()
-except Exception as error:
-    runner.report_fatal(error)
+runner.report_fatal(RuntimeError("机器人连接断开"))
 ```
 
-调用后：
+首次调用会：
 
-- 只记录第一个致命故障，后续重复报告不会覆盖它。
-- Runner 停止继续调度。
-- 当前任务和订单标记为 `FAILED(fatal_error)`。
-- 当前订单尚未执行的后续任务标记为 `SKIPPED`。
-- 调用构造时传入的 `on_fatal(error)`，由宿主清理硬件资源。
-- `get_status()` 返回 `RunnerState.FAULTED`，且不再允许提交订单。
+1. 保存原始异常。
+2. 停止接收和调度新订单。
+3. 将当前任务和当前订单标为 `FAILED(fatal_error)`。
+4. 将当前订单尚未执行的后续任务标为 `SKIPPED`。
+5. 关闭等待队列。
+6. 调用构造 Runner 时传入的 `on_fatal(error)`。
 
-业务层不能用该方法代替订单失败或订单取消。
+后续重复调用不会覆盖第一次故障信息。
 
-## 10. 安全关闭
+## 10. 动作适配接口
 
-### `shutdown() -> None`
-
-在 Runner 空闲时永久关闭 Worker、队列和控制器监控。
+`TaskRunner` 依赖 `BeverageOrderActions` 协议：
 
 ```python
-from taskrunner.errors import RunnerBusyError
+from taskrunner.taskrunner_contracts import (
+    RobotTaskType,
+    TaskExecutionResult,
+)
 
-try:
-    runner.shutdown()
-except RunnerBusyError:
-    print("仍有当前订单或等待订单，不能关闭")
-else:
-    runtime.close()
+
+class BeverageOrderActions:
+    def execute(
+        self,
+        task_type: RobotTaskType,
+        *,
+        target_id: str,
+    ) -> TaskExecutionResult:
+        ...
+
+    def cancel_paused_pick(self) -> None:
+        ...
 ```
 
-行为：
+调用约束：
 
-- Runner 未启动时调用不会报错。
-- 正常运行时，只要存在当前订单或等待订单，就抛出 `RunnerBusyError`。
-- 已发生致命故障时允许立即进入清理流程。
-- 关闭是永久的；需要重新运行时必须重新创建完整 Runtime 和 TaskRunner。
-- `shutdown()` 只管理 Runner 生命周期；外部机器人、相机和 AGV 资源仍应由 Runtime 的 `close()` 清理。
+- `execute()` 由唯一 Worker 串行调用。
+- `target_id` 是订单创建时由 `item_id` 映射出的视觉识别标签。
+- 普通业务结果返回 `TaskExecutionResult`。
+- 未处理异常会被 Runner 视为致命故障。
+- `cancel_paused_pick()` 只在暂停抓取任务收到取消请求后由 Worker 调用。
+- 动作适配器不维护订单状态，也不能直接访问 Runner 的队列或订单字典。
 
-## 11. 完整业务调用示例
+现有实现：
 
-下面的例子演示启动、提交、观察到终态和安全关闭。正式程序不一定需要用循环轮询，可以根据宿主架构封装观察方式。
+- `HardwareBeverageOrderActions`：正式机器人、灵巧手和 AGV 动作。
+- `TestRecognitionOrders`：识别测试环境动作，不创建 AGV 或灵巧手。
+
+抓取 Workflow 返回 `PickWorkflowResult`，动作适配器通过 `pick_result_to_task_result()` 将其转换为通用 `TaskExecutionResult`。这是 Workflow 业务结果与 Runner 状态机之间的边界。
+
+## 11. 运行时工厂
+
+### 正式硬件运行时
+
+```python
+create_hardware_runtime(
+    *,
+    config_dir: Path,
+    camera_name: str = "left",
+    agv_ip: str = "192.168.110.93",
+    agv_port: int = 9201,
+    agv_device_id: int = 1,
+    queue_capacity: int = 10,
+    monitor_interval_s: float = 0.02,
+    on_fatal=None,
+) -> HardwareRuntime
+```
+
+返回对象字段：
+
+```python
+runtime.runner
+runtime.robot
+runtime.monitor_robot
+runtime.camera
+runtime.snapshot_command
+runtime.agv
+runtime.close()
+```
+
+### 识别测试运行时
+
+```python
+create_recognition_test_runtime(
+    *,
+    config_dir: Path,
+    robot_ip: str = "192.168.110.77",
+    camera_name: str = "left",
+    queue_capacity: int = 10,
+    monitor_interval_s: float = 0.02,
+    stage_delay_s: float = 3.0,
+    on_fatal=None,
+) -> RecognitionTestRuntime
+```
+
+返回对象字段：
+
+```python
+runtime.runner
+runtime.robot
+runtime.monitor_robot
+runtime.camera
+runtime.snapshot_command
+runtime.close()
+```
+
+两个工厂都会完成资源连接和依赖组装，但不会自动调用 `runner.start()`。`runtime.close()` 只关闭该运行时实际创建的外部资源。
+
+## 12. 异常类型
+
+所有 TaskRunner 应用层异常都继承 `TaskRunnerError`：
+
+| 异常 | 含义 |
+| --- | --- |
+| `QueueFullError` | 等待订单已经达到容量上限 |
+| `QueueClosedError` | 内部等待队列已经关闭 |
+| `UnknownOrderError` | `order_id` 不存在 |
+| `OrderNotCancellableError` | 当前订单状态不允许取消 |
+| `UnsupportedBeverageError` | 不支持该 `item_id` |
+| `RunnerNotStartedError` | Runner 尚未启动 |
+| `RunnerStoppedError` | Runner 已关闭或已发生致命故障 |
+| `RunnerBusyError` | 仍有当前订单或等待订单，不能正常关闭 |
+| `FatalExecutionError` | 必须停止 Runner 的执行错误 |
+| `ControllerMonitorError` | 控制器监控连接或状态读取失败 |
+| `ControllerFaultError` | 机器人掉使能、控制器报警或驱动器报警 |
+
+## 13. 完整调用示例
 
 ```python
 import time
 from pathlib import Path
 
+from taskrunner import OrderStatus
 from taskrunner.runtime import create_hardware_runtime
-from taskrunner.taskrunner_contracts import TERMINAL_ORDER_STATUSES
 
 
 runtime = create_hardware_runtime(config_dir=Path("config"))
@@ -442,69 +490,23 @@ runner = runtime.runner
 
 try:
     runner.start()
-
-    status = runner.get_status()
-    if not status.accepting_orders:
-        raise RuntimeError("TaskRunner 当前不允许接单")
-
     submitted = runner.submit_beverage("water")
-    order_id = submitted.order_id
-    print(f"已提交订单: {order_id}")
 
     while True:
-        order = runner.get_order(order_id)
-        print(order.status.value, order.message)
+        order = runner.get_order(submitted.order_id)
+        print(order.status.value, order.error_code, order.message)
 
-        if order.status in TERMINAL_ORDER_STATUSES:
+        if order.status in {
+            OrderStatus.SUCCEEDED,
+            OrderStatus.FAILED,
+            OrderStatus.CANCELLED,
+        }:
             break
         time.sleep(0.5)
 
-    print(f"订单最终状态: {order.status.value}")
+    runner.shutdown()
 finally:
-    try:
-        runner.shutdown()
-    finally:
-        runtime.close()
+    runtime.close()
 ```
 
-## 12. 异常类型
-
-所有可分类的 TaskRunner 应用层异常都继承自 `TaskRunnerError`：
-
-```python
-from taskrunner.errors import TaskRunnerError
-
-try:
-    order = runner.submit_beverage("water")
-except TaskRunnerError as error:
-    print(type(error).__name__, str(error))
-```
-
-常用异常：
-
-| 异常 | 含义 |
-| --- | --- |
-| `QueueFullError` | FIFO 等待队列已满 |
-| `UnknownOrderError` | 当前进程中不存在该订单 ID |
-| `OrderNotCancellableError` | 订单当前状态不允许取消 |
-| `UnsupportedBeverageError` | 不支持该 `item_id` |
-| `RunnerNotStartedError` | `start()` 前提交订单 |
-| `RunnerStoppedError` | Runner 已关闭或已因致命故障停止 |
-| `RunnerBusyError` | 存在活动/等待订单，不能正常关闭 |
-
-## 13. 使用约束
-
-- 所有查询方法返回只读快照，调用方不能通过快照修改 Runner 内部状态。
-- 不要读取 `_orders`、`_queue`、`_current_order_id` 等私有字段。
-- Runner 只有一个 Worker，订单严格按 FIFO 顺序串行执行。
-- TaskRunner 不持久化；程序退出后订单、队列和终态记录全部丢失。
-- 当前版本不支持恢复暂停订单，也不支持取消正在运行的订单。
-- 当前版本不提供历史订单列表；调用方如果需要稍后查询终态，应保存 `submit_beverage()` 返回的 `order_id`。
-
-相关代码：
-
-- 公开类：[`runner.py`](runner.py)
-- 快照与状态枚举：[`taskrunner_contracts.py`](taskrunner_contracts.py)
-- 业务异常：[`errors.py`](errors.py)
-- 订单和动作适配器：[`orders.py`](orders.py)
-- Runtime 组装：[`runtime.py`](runtime.py)
+如果调用方需要在发生致命故障后自动关闭硬件资源，应在创建运行时前准备一个宿主回调，并通过 `on_fatal` 传入。回调不得尝试恢复或重新启动同一个 Runner。
