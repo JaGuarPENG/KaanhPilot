@@ -5,7 +5,7 @@ import time
 
 from taskrunner.errors import FatalExecutionError
 from taskrunner.orders import BEVERAGE_TARGET_IDS
-from taskrunner.taskrunner_contracts import PauseReason, RobotTaskType, TaskExecutionResult
+from taskrunner.taskrunner_contracts import RobotTaskType, TaskExecutionResult
 
 
 class SimulatedActions:
@@ -22,17 +22,17 @@ class SimulatedActions:
         if scenario not in ('available', 'sold-out', 'confirmation-empty', 'paused', 'fatal'):
             raise ValueError('未知模拟场景')
         with self._lock:
-            self._scenarios[item_id] = scenario
+            self._scenarios[BEVERAGE_TARGET_IDS[item_id]] = scenario
 
-    def execute(self, task_type, *, item_id, target_id):
+    def execute(self, task_type, *, target_id):
         time.sleep(self.delay)
         if task_type is RobotTaskType.PICK:
             with self._lock:
-                scenario = self._scenarios.get(item_id, 'available')
+                scenario = self._scenarios.get(target_id, 'available')
             if scenario in ('sold-out', 'confirmation-empty'):
                 return TaskExecutionResult.failed('out_of_stock', '模拟识别未发现库存')
             if scenario == 'paused':
-                return TaskExecutionResult.paused(PauseReason.SECOND_DETECTION_FAILED, '模拟二次识别失败')
+                return TaskExecutionResult.paused('second_detection_failed', '模拟二次识别失败')
             if scenario == 'fatal':
                 raise FatalExecutionError('模拟控制器故障；请重启服务')
         return TaskExecutionResult.succeeded('模拟阶段完成')

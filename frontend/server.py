@@ -27,9 +27,10 @@ def to_jsonable(value):
     return value
 
 
-def handler_for(runner, *, dry_run=False, simulation=None, camera=None, runtime_id=None):
+def handler_for(runner, *, dry_run=False, simulation=None, cameras=None, runtime_id=None):
     identity = runtime_id or secrets.token_hex(16)
-    camera_lock = threading.Lock()
+    cameras = dict(cameras or {})
+    camera_locks = {name: threading.Lock() for name in cameras}
     mutation_lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
@@ -92,19 +93,25 @@ def handler_for(runner, *, dry_run=False, simulation=None, camera=None, runtime_
                 return self.json(200, runner.get_queue())
             if path == '/api/info':
                 return self.json(200, {'dry_run': dry_run, 'runtime_id': identity,
-                                       'camera_available': camera is not None,
+                                       'camera_available': cameras.get('left') is not None,
+                                       'cameras': {name: cameras.get(name) is not None
+                                                   for name in ('head', 'left', 'right')},
                                        'inventory_test': simulation is not None})
             if path.startswith('/api/orders/'):
                 order_id = unquote(path[len('/api/orders/'):])
                 if not order_id or '/' in order_id:
                     return self.error(404, '接口不存在')
                 return self.json(200, runner.get_order(order_id))
-            if path == '/api/cameras/left/frame.jpg':
+            if path.startswith('/api/cameras/') and path.endswith('/frame.jpg'):
+                name = path[len('/api/cameras/'):-len('/frame.jpg')]
+                if name not in ('head', 'left', 'right'):
+                    return self.error(404, '接口不存在')
+                camera = cameras.get(name)
                 if camera is None:
                     return self.error(503, '当前模式没有实时相机')
                 import cv2
                 import numpy as np
-                with camera_lock:
+                with camera_locks[name]:
                     frame = camera.get_latest_color_frame()
                     if frame is None:
                         return self.error(503, '相机尚无画面')
@@ -178,9 +185,10 @@ def serve(config, config_dir):
                                  BaseHTTPRequestHandler)
     try:
         runtime = create_runtime(config, config_dir, on_fatal)
+        dry_run = config.get('dry_run', True)
+        cameras = {'left': runtime.camera} if dry_run else runtime.cameras
         server.RequestHandlerClass = handler_for(runtime.runner,
-            dry_run=config.get('dry_run', True),
-            camera=runtime.camera)
+            dry_run=dry_run, cameras=cameras)
         runtime.runner.start()
         while True:
             try:

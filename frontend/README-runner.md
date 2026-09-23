@@ -1,5 +1,28 @@
 # 前端直接接入 TaskRunner
 
+## iPad 界面（方案 N）
+
+- 点单页采用浅灰背景，按饮料、零食、咖啡的小标题分组，每行两款无边框商品。
+- 「点单 / 订单」底部导航常驻，点单时保留四段细线订单进度。页面可滚动并为底栏、安全区预留空间。
+- 订单页包含当前订单、可展开的等待队列、默认折叠的本页历史订单，以及头部主视角和左右手小视角。
+- 队列及历史条目可打开详情；查看详情不改变正在执行订单的进度跟踪。
+- 维护入口打开补货与库存测试弹窗，保持原有运行模式及忙碌状态限制。
+- 下单不会自动切页。咖啡、零食仍使用原 itemTasks 映射，实际执行物品不同的说明在点单摘要中保留。
+- 页面继续使用项目已有商品图、咖啡插画和相机示意资源；正式运行时显示已启动的头部与左手相机，未接入的右手相机保留示意图。测试运行时仅显示左手相机。
+
+浏览器回归（需要 Node、Playwright 和本机 Edge；Playwright 可通过 NODE_PATH 指向环境已有依赖）：
+
+```powershell
+node --test frontend/tests/test_ipad_ui.cjs frontend/tests/test_progress_follow.cjs frontend/tests/test_queue_model.cjs frontend/tests/test_status_contract.cjs
+```
+
+这些浏览器检查通过隔离的模拟 HTTP 接口验证真实页面，不连接机器人。覆盖下单映射、取消、订单详情、断线、提交不明恢复、维护入口和不同视口下的底栏布局。设置 `UI_SCREENSHOTS` 为输出目录可保存 1024×1536 竖屏截图；本次预览位于 `frontend/preview/`。
+
+本次验证：Python 前端测试 23 项通过；Node 非浏览器测试 10 项通过。
+浏览器回归需要本机安装 Playwright，本环境未运行该项。
+
+## 启动与接口
+
 唯一 Python 启动入口为根目录 `python launcher.py`。`frontend/Start-Frontend.bat`
 也转到这个入口。读取 `config/launcher/launcher_config.json`，不再使用前端独立配置。
 
@@ -9,7 +32,8 @@
 地址检测失败不阻止服务启动；网页需等待设备初始化完成后才能访问。
 
 - `dry_run: true`：通过 `create_recognition_test_runtime()` 连接模拟机器人服务器，并初始化左手相机和识别资源，不连接 AGV 和灵巧手。
-- `dry_run: false`：通过现有 `create_hardware_runtime()` 连接机器人、左手相机、灵巧手和 AGV。
+- `dry_run: false`：通过现有 `create_hardware_runtime()` 连接机器人、头部和左手相机、灵巧手和 AGV；右手相机尚未接入。
+  右手相机接入并由运行时加入 `cameras` 后，页面会自动改为实时画面，不需改页面配置。
 - `simulation_robot_ip`：可选的模拟控制器 IP，未设置时沿用 runtime 默认值 `192.168.110.77`。
 - `stage_delay`：可选的测试阶段等待秒数，未设置时沿用 runtime 默认值 3；`queue_capacity` 默认 10。
 - `host`、`port`、`python_executable` 和 AGV 配置继续由根启动入口读取。页面无需口令，旧配置中的 `api_token` 不再使用。
@@ -24,8 +48,8 @@
 | GET /api/queue | get_queue 原始快照 |
 | GET /api/orders/{id} | get_order 原始快照 |
 | POST /api/orders/{id}/cancel | cancel_order |
-| GET /api/info | 运行模式、相机能力、测试注入能力与进程会话标识 |
-| GET /api/cameras/left/frame.jpg | 复用硬件运行时已有相机，头部和右手暂为示意图 |
+| GET /api/info | 运行模式、`cameras: {head, left, right}` 各视角可用性、测试注入能力与进程会话标识 |
+| GET /api/cameras/{head,left,right}/frame.jpg | 返回运行时已启动相机的 JPEG 单帧；未接入的相机返回 503，页面显示示意图 |
 | POST /api/test/inventory | 仅单元测试注入纯软件动作时可用；正常启动的两种模式均不提供 |
 
 前端轮询队列，并继续查询已离队的订单，取得最终完成、失败或无库存结果。

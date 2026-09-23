@@ -23,7 +23,7 @@ class CameraSetupTests(unittest.TestCase):
         }
         self.g305 = {"profile": "1280@30", "alignment": "auto", "warmup_seconds": 1.0,
                      "minimum_depth_m": 0.02, "maximum_depth_m": 2.0, "spatial_enabled": True}
-        self.d435 = {"profile": "1280@30", "alignment": "software", "warmup_seconds": 2.0,
+        self.d435 = {"profile": "1280@6", "alignment": "software", "warmup_seconds": 2.0,
                      "minimum_depth_m": 0.15, "maximum_depth_m": 3.0, "temporal_enabled": True,
                      "hole_filling_enabled": True, "hole_filling_mode": 1}
         read_json = RobotSetup._read_json
@@ -45,6 +45,8 @@ class CameraSetupTests(unittest.TestCase):
         head, wrist = config.cameras["head"], config.cameras["wrist"]
         self.assertEqual(head.profile.color_height, 800)
         self.assertEqual(wrist.profile.color_height, 720)
+        self.assertEqual(wrist.profile.color_fps, 6)
+        self.assertEqual(wrist.profile.depth_fps, 6)
         self.assertEqual(head.profile.color_format, "MJPG")
         self.assertEqual(wrist.profile.color_format, "RGB8")
         self.assertEqual((head.warmup_seconds, wrist.warmup_seconds), (1., 2.))
@@ -80,9 +82,11 @@ class CameraSetupTests(unittest.TestCase):
             RobotSetup(ROOT / "config")
 
     def test_profile_is_validated_against_selected_type(self):
-        self.d435["profile"] = "1920@90"
-        with self.assertRaisesRegex(ValueError, "1920@90"):
-            RobotSetup(ROOT / "config")
+        for invalid_profile in ("648@30", "848@30"):
+            with self.subTest(profile=invalid_profile):
+                self.d435["profile"] = invalid_profile
+                with self.assertRaisesRegex(ValueError, invalid_profile):
+                    RobotSetup(ROOT / "config")
 
     def test_type_supplies_default_settings_filename(self):
         del self.registry["head"]["settings_file"]
@@ -145,6 +149,7 @@ class ShippedCameraConfigTests(unittest.TestCase):
     def test_real_config_files_create_both_stopped_adapters(self):
         setup = RobotSetup(ROOT / "config")
         self.assertEqual(setup.get_camera_settings("head").profile.depth_format, "Z16")
+        self.assertEqual(setup.get_camera_settings("head").profile.depth_width, 640)
         self.assertEqual(setup.get_camera_settings("head").depth_processing.hole_filling_mode, 1)
         for name, adapter in (("head", RealSenseD435Camera), ("left", OrbbecG305Camera)):
             with self.subTest(camera=name):

@@ -407,7 +407,6 @@ class BeverageOrderActions:
 create_hardware_runtime(
     *,
     config_dir: Path,
-    camera_name: str = "left",
     agv_ip: str = "192.168.110.93",
     agv_port: int = 9201,
     agv_device_id: int = 1,
@@ -423,11 +422,15 @@ create_hardware_runtime(
 runtime.runner
 runtime.robot
 runtime.monitor_robot
-runtime.camera
+runtime.cameras["left"]
+runtime.cameras["head"]
+runtime.camera  # 现有调用方使用的左手相机别名
 runtime.snapshot_command
 runtime.agv
 runtime.close()
 ```
+
+正式运行时启动左手和头部相机；抓取 Workflow 使用左手相机。右手相机尚未接入，不会在启动时连接。
 
 ### 识别测试运行时
 

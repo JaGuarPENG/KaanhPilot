@@ -400,19 +400,21 @@ class D435Tests(unittest.TestCase):
 
     def test_every_declared_profile_requests_its_exact_pair(self):
         camera = self.camera()
+        self.assertEqual(profiles.D435_SUPPORTED_PROFILES, (
+            profiles.D435_640X480_30, profiles.D435_1280X720_6,
+        ))
         for profile in profiles.D435_SUPPORTED_PROFILES:
             sdk = StreamingSDK()
             candidate = type(camera)(profile)
             device = candidate._select_device(sdk)
             config = candidate._build_config(sdk, sdk.pipeline(None), device)
             self.assertEqual(config.serial, "d435-a")
-            self.assertEqual(config.streams["color"].fmt, "rgb8")
-            self.assertEqual(config.streams["depth"].fmt, "z16")
-        hd = type(camera)(profiles.D435_1920X1080_30)
-        sdk = StreamingSDK()
-        config = hd._build_config(sdk, sdk.pipeline(None), hd._select_device(sdk))
-        self.assertEqual((config.streams["color"].w, config.streams["color"].h), (1920, 1080))
-        self.assertEqual((config.streams["depth"].w, config.streams["depth"].h), (1280, 720))
+            for stream, fmt in (("color", "rgb8"), ("depth", "z16")):
+                actual = config.streams[stream]
+                self.assertEqual((actual.w, actual.h, actual.rate, actual.fmt),
+                                 (getattr(profile, f"{stream}_width"),
+                                  getattr(profile, f"{stream}_height"),
+                                  getattr(profile, f"{stream}_fps"), fmt))
 
     def test_invalid_depth_units_are_rejected(self):
         camera = self.camera()

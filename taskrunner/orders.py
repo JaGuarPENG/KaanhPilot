@@ -195,21 +195,46 @@ class HardwareBeverageOrderActions:
         都不得降级成暂停。
         """
 
+        # if task_type is RobotTaskType.PICK:
+        #     result = self._pick_workflow.execute(self._model_id, target_id)
+        #     return pick_result_to_task_result(result)
+        # if task_type is RobotTaskType.TRANSPORT_TO_DROPOFF:
+        #     self._robot_executor.move_transport_pose()
+        #     self._navigate_to(self._dropoff_station_id)
+        #     return TaskExecutionResult.succeeded()
+        # if task_type is RobotTaskType.PLACE:
+        #     self._robot_executor.move_place_pose()
+        #     self._robot_executor.move_arm_by_tool_offset(self._model_id, [35.5, 0, 0])
+        #     self._hand_executor.release(self._hand_id)
+        #     self._robot_executor.move_transport_pose()
+        #     return TaskExecutionResult.succeeded()
+        # if task_type is RobotTaskType.RETURN_AND_RESET:
+        #     self._navigate_to(self._pickup_station_id)
+        #     self._robot_executor.move_init_pose()
+        #     return TaskExecutionResult.succeeded()
+        # raise ValueError(f"不支持的机器人任务类型: {task_type}")
+    
+        # 0922测试版本程序，原地测试不移动AGV
         if task_type is RobotTaskType.PICK:
             result = self._pick_workflow.execute(self._model_id, target_id)
             return pick_result_to_task_result(result)
         if task_type is RobotTaskType.TRANSPORT_TO_DROPOFF:
-            self._robot_executor.move_transport_pose()
-            self._navigate_to(self._dropoff_station_id)
+            # self._robot_executor.move_transport_pose()
+            # self._navigate_to(self._dropoff_station_id)
+            print("[TaskRunner] 模拟 AGV 已到达放置位置。")
             return TaskExecutionResult.succeeded()
         if task_type is RobotTaskType.PLACE:
-            self._robot_executor.move_place_pose()
-            self._robot_executor.move_arm_by_tool_offset(self._model_id, [35.5, 0, 0])
+            # self._robot_executor.move_place_pose()
+            # self._robot_executor.move_arm_by_tool_offset(self._model_id, [35.5, 0, 0])
+            # self._hand_executor.release(self._hand_id)
+            # self._robot_executor.move_transport_pose()
+            # self._robot_executor.move_init_pose()
+            self._robot_executor.move_arm_by_tool_offset(self._model_id, [50, 0, 250])
             self._hand_executor.release(self._hand_id)
-            self._robot_executor.move_transport_pose()
             return TaskExecutionResult.succeeded()
         if task_type is RobotTaskType.RETURN_AND_RESET:
-            self._navigate_to(self._pickup_station_id)
+            # self._navigate_to(self._pickup_station_id)
+            self._robot_executor.move_arm_by_tool_offset(self._model_id, [0, 0, -100])
             self._robot_executor.move_init_pose()
             return TaskExecutionResult.succeeded()
         raise ValueError(f"不支持的机器人任务类型: {task_type}")

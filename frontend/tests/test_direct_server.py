@@ -4,9 +4,11 @@ import threading
 import time
 import unittest
 from http.server import ThreadingHTTPServer
+from types import SimpleNamespace
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from unittest.mock import patch
+import numpy as np
 from taskrunner.runner import TaskRunner
 
 
@@ -96,14 +98,51 @@ class DirectServerTests(unittest.TestCase):
 
     def test_recognition_mode_reports_live_camera_without_inventory_injection(self):
         from frontend.server import handler_for
-        self.server.RequestHandlerClass = handler_for(self.runner, dry_run=True, camera=object())
+        self.server.RequestHandlerClass = handler_for(self.runner, dry_run=True, cameras={'left': object()})
         info = self.request('/api/info')
         self.assertTrue(info['dry_run'])
         self.assertTrue(info['camera_available'])
+        self.assertEqual(info['cameras'], {'head': False, 'left': True, 'right': False})
         self.assertFalse(info['inventory_test'])
         with self.assertRaises(HTTPError) as error:
             self.request('/api/test/inventory', {'item_id':'water', 'scenario':'sold-out'})
         self.assertEqual(error.exception.code, 404)
+
+    def test_each_available_camera_has_its_own_frame_route(self):
+        from frontend.server import handler_for
+
+        class Camera:
+            def __init__(self, value):
+                self.value = value
+                self.reads = 0
+
+            def get_latest_color_frame(self):
+                self.reads += 1
+                return SimpleNamespace(rgb=np.full((4, 4, 3), self.value, dtype=np.uint8))
+
+        head, left = Camera(20), Camera(220)
+        self.server.RequestHandlerClass = handler_for(self.runner, cameras={'head': head, 'left': left})
+        self.assertEqual(self.request('/api/info')['cameras'],
+                         {'head': True, 'left': True, 'right': False})
+        with urlopen(self.base + '/api/cameras/head/frame.jpg') as response:
+            head_frame = response.read()
+            self.assertEqual(response.headers['Content-Type'], 'image/jpeg')
+        with urlopen(self.base + '/api/cameras/left/frame.jpg') as response:
+            left_frame = response.read()
+        self.assertTrue(head_frame.startswith(b'\xff\xd8'))
+        self.assertTrue(left_frame.startswith(b'\xff\xd8'))
+        self.assertNotEqual(head_frame, left_frame)
+        self.assertEqual((head.reads, left.reads), (1, 1))
+        for path, status in (('/api/cameras/right/frame.jpg', 503),
+                             ('/api/cameras/unknown/frame.jpg', 404)):
+            with self.subTest(path=path), self.assertRaises(HTTPError) as error:
+                urlopen(self.base + path)
+            self.assertEqual(error.exception.code, status)
+        right = Camera(100)
+        self.server.RequestHandlerClass = handler_for(self.runner, cameras={'right': right})
+        with urlopen(self.base + '/api/cameras/right/frame.jpg') as response:
+            self.assertTrue(response.read().startswith(b'\xff\xd8'))
+        self.assertEqual(right.reads, 1)
 
 
 class RuntimeTests(unittest.TestCase):
@@ -161,9 +200,19 @@ class RuntimeTests(unittest.TestCase):
             server.return_value.serve_forever.side_effect = KeyboardInterrupt
             runtime = factory.return_value
             serve({'dry_run':True, 'api_token':'obsolete-config-value'}, 'config')
-            handler.assert_called_once_with(runtime.runner, dry_run=True, camera=runtime.camera)
+            handler.assert_called_once_with(runtime.runner, dry_run=True, cameras={'left': runtime.camera})
             runtime.runner.start.assert_called_once()
             runtime.close.assert_called_once()
+
+    def test_server_passes_hardware_camera_map(self):
+        from frontend.server import serve
+        with patch('frontend.server.create_runtime') as factory, \
+                patch('frontend.server.ThreadingHTTPServer') as server, \
+                patch('frontend.server.handler_for') as handler:
+            server.return_value.serve_forever.side_effect = KeyboardInterrupt
+            runtime = factory.return_value
+            serve({'dry_run': False}, 'config')
+            handler.assert_called_once_with(runtime.runner, dry_run=False, cameras=runtime.cameras)
 
 
 if __name__ == '__main__':

@@ -36,11 +36,17 @@ class HardwareRuntime:
     runner: TaskRunner
     robot: object
     monitor_robot: object
-    camera: object
+    cameras: dict[str, object]
     snapshot_command: object
     agv: object
     _closed: bool = field(default=False, init=False)
     _close_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    @property
+    def camera(self) -> object:
+        """现有调用方使用的左手相机；与 ``cameras['left']`` 是同一实例。"""
+
+        return self.cameras["left"]
 
     def close(self) -> None:
         with self._close_lock:
@@ -48,7 +54,8 @@ class HardwareRuntime:
                 return
             self._closed = True
         _close_resources(
-            (self.snapshot_command, self.camera, self.agv, self.monitor_robot, self.robot)
+            (self.snapshot_command, *reversed(tuple(self.cameras.values())),
+             self.agv, self.monitor_robot, self.robot)
         )
 
 
@@ -88,7 +95,6 @@ def _connect_robot(robot, config, *, label: str, enable: bool) -> None:
 def create_hardware_runtime(
     *,
     config_dir: Path,
-    camera_name: str = "left",
     agv_ip: str = "192.168.110.93",
     agv_port: int = 9201,
     agv_device_id: int = 1,
@@ -108,20 +114,26 @@ def create_hardware_runtime(
 
     setup = RobotSetup(config_dir)
     config = setup.get_robot_config()
-    camera_settings = setup.get_camera_settings(camera_name)
+    # 右手相机尚未接入。接入后将 "right" 加入此列表即可由同一流程管理。
+    camera_names = ("left", "head")
     robot = setup.setup_robot(config.robot.control_port)
     monitor_robot = setup.setup_robot(config.robot.monitor_port)
-    camera = setup.setup_camera(camera_name)
     agv = AGVBackend(ip=agv_ip, port=agv_port, device_id=agv_device_id, timeout=3.0)
+    cameras: dict[str, object] = {}
     snapshot_command = None
 
     try:
+        for name in camera_names:
+            cameras[name] = setup.setup_camera(name)
+        camera = cameras["left"]
+        camera_settings = setup.get_camera_settings("left")
         _connect_robot(robot, config, label="控制端口", enable=True)
         _connect_robot(monitor_robot, config, label="监控端口", enable=False)
         if not agv.connect():
             raise RuntimeError("无法连接 AGV 控制器")
-        camera.start()
-        time.sleep(camera_settings.warmup_seconds)
+        for name in camera_names:
+            cameras[name].start()
+        time.sleep(max(setup.get_camera_settings(name).warmup_seconds for name in camera_names))
         detector = setup.setup_detector()
         localizer = RoiPointCloudLocalizer(config.localization, collect_inspection=False)
         snapshot_command = SnapShotCommand(
@@ -162,9 +174,13 @@ def create_hardware_runtime(
             monitor=monitor,
             on_fatal=on_fatal,
         )
-        return HardwareRuntime(runner, robot, monitor_robot, camera, snapshot_command, agv)
+
+        robot_executor.move_init_pose()
+        print("[TaskRunner] 机器人已回到初始位，准备就绪。")
+        return HardwareRuntime(runner, robot, monitor_robot, cameras, snapshot_command, agv)
     except Exception:
-        _close_resources((snapshot_command, camera, agv, monitor_robot, robot))
+        _close_resources((snapshot_command, *reversed(tuple(cameras.values())),
+                          agv, monitor_robot, robot))
         raise
 
 

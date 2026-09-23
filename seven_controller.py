@@ -26,7 +26,7 @@ cmd_queue = queue.Queue()
 
 # ROBOT_IP = "192.168.110.77"  # 请根据实际情况修改为机器人的IP地址
 
-ROBOT_IP = "192.168.110.77"  # 请根据实际情况修改为机器人的IP地址
+ROBOT_IP = "192.168.100.99"  # 请根据实际情况修改为机器人的IP地址
 PORT_MONITOR = DEFAULT_MONITOR_PORT  # 监听端口
 UDP_PORT = 9998  # UDP端口
 PORT_CONTROL = DEFAULT_CONTROL_PORT  # 控制端口

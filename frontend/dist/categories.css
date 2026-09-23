@@ -1,85 +1,7 @@
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-.intro { padding: 36px 0 28px; }
-.intro h1 { font-size: 40px; line-height: 1.25; margin: 0 0 12px; }
-/* Three positions on a circular selector; the active label always stays centered. */
-.category-switch {
-  position: relative;
-  isolation: isolate;
-  width: min(340px, 100%);
-  height: 59px;
-  margin: 0 auto 20px;
-  border: 1px solid #dedee4;
-  border-radius: 20px;
-  background: #e9e9ed;
-  box-shadow: inset 0 1px 2px #00000003;
-  touch-action: pan-y;
-  user-select: none;
-}
-.category-thumb {
-  position: absolute;
-  z-index: -1;
-  inset: 5px auto 5px 34%;
-  width: 32%;
-  border-radius: 15px;
-  background: #fff;
-  box-shadow: 0 2px 6px #1d1d1f0d, 0 0 1px #1d1d1f18;
-}
-.category-switch button {
-  position: absolute;
-  top: 5px;
-  left: 34%;
-  width: 32%;
-  height: calc(100% - 10px);
-  border: 0;
-  border-radius: 15px;
-  padding: 8px 0;
-  background: transparent;
-  color: #727279;
-  font-size: 18px;
-  font-weight: 500;
-  letter-spacing: .06em;
-  cursor: pointer;
-  touch-action: pan-y;
-  transition: transform 320ms cubic-bezier(.22,1,.36,1), opacity 280ms, filter 280ms, color 200ms;
-}
-.category-switch button[data-position="left"] { transform: translateX(-100%) scale(.88); }
-.category-switch button[data-position="right"] { transform: translateX(100%) scale(.88); }
-.category-switch button[aria-selected="false"] { opacity: .55; filter: blur(.65px); }
-.category-switch button[aria-selected="true"] { color: #1d1d1f; font-weight: 600; transform: translateX(0); z-index: 1; }
-.category-switch button:focus-visible { filter: none; opacity: 1; outline-offset: 0; }
-.category-switch button:disabled { cursor: not-allowed; }
-.category-switch[aria-busy="true"] { opacity: .65; }
-.category-switch.is-dragging button { transition: none; }
-.category-switch.is-dragging button[data-position="left"] { transform: translateX(calc(-100% + var(--drag, 0px))) scale(.88); }
-.category-switch.is-dragging button[data-position="right"] { transform: translateX(calc(100% + var(--drag, 0px))) scale(.88); }
-.category-switch.is-dragging button[data-position="center"] { transform: translateX(var(--drag, 0px)); }
-.category-panel:not([hidden]) { animation: category-enter 260ms ease both; }
 .drink-image.snack-image { background-image: url("assets/snacks.png"); background-size: 300% 100%; }
 .chips { background-position: 0 50%; }
 .cookies { background-position: 50% 50%; }
 .chocolate { background-position: 100% 50%; }
-.drink-card .card-action { margin-top: 17px; }
-@keyframes category-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-@media (max-width: 650px) {
-  .intro { padding: 28px 0 22px; }
-  .intro h1 { font-size: 32px; margin-bottom: 10px; }
-  .category-switch { width: min(300px, 100%); margin-bottom: 17px; border-radius: 18px; }
-  .category-switch button { font-size: 17px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .category-thumb, .category-switch button { transition: none; }
-  .category-panel:not([hidden]) { animation: none; }
-}
 
 /* Quiet, scalable porcelain cup illustrations, including compact task thumbnails. */
 .drink-image.coffee-image {
@@ -109,5 +31,3 @@
   border-radius: 45%;
   box-shadow: 1px 2px 2px #95877825;
 }
-#workspace.is-observing .selection-content { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-@media (max-width: 900px) { #workspace.is-observing .selection-content { grid-template-columns: 1fr; } }

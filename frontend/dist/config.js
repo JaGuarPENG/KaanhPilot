@@ -6,12 +6,11 @@ window.REACH_CONFIG = Object.freeze({
   itemTasks: {water:'water', cola:'cola', oolong_tea:'oolong_tea',
     potato_chips:'water', cookies:'water', chocolate:'water',
     americano:'water', latte:'water', cappuccino:'water'},
-  // type: "image"（图片/MJPEG）或 "video"（浏览器可播放的视频）。
-  // 接入真实相机后设置 demo: false；WebRTC/RTSP 需要另行适配。
+  // type: "snapshot" 定时读取后端 JPEG；未接入的相机由页面显示示意图。
   cameras: {
-    head: {type:"image", src:"assets/camera-head.svg", demo:true},
+    head: {type:"snapshot", src:"/api/cameras/head/frame.jpg", demo:false, refreshMs:200},
     left: {type:"snapshot", src:"/api/cameras/left/frame.jpg", demo:false, refreshMs:33},
-    right: {type:"image", src:"assets/camera-right.svg", demo:true}
+    right: {type:"snapshot", src:"/api/cameras/right/frame.jpg", demo:false, refreshMs:200}
   },
   requestTimeoutMs: 8000, pollIntervalMs: 1000
 });

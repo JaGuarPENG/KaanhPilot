@@ -13,8 +13,7 @@ from camera.adapters.orbbec.profiles import (
 )
 from camera.adapters.realsense.d435 import RealSenseD435Camera
 from camera.adapters.realsense.profiles import (
-    D435_640X480_30, D435_848X480_30, D435_848X480_60,
-    D435_1280X720_30, D435_1920X1080_30,
+    D435_640X480_30, D435_1280X720_6,
 )
 from camera.contracts.interface import Camera
 from camera.contracts.cam_structs import AlignmentMode, DepthProcessingConfig
@@ -53,10 +52,7 @@ CAMERA_PROFILES: dict[str, dict[str, CameraProfile]] = {
     },
     "realsense_d435": {
         "640@30": D435_640X480_30,
-        "848@30": D435_848X480_30,
-        "848@60": D435_848X480_60,
-        "1280@30": D435_1280X720_30,
-        "1920@30": D435_1920X1080_30,
+        "1280@6": D435_1280X720_6,
     },
 }
 CAMERA_SETTINGS_FILES = {"orbbec_g305": "g305.json", "realsense_d435": "d435.json"}
