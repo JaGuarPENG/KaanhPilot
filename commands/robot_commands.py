@@ -35,7 +35,7 @@ class RobotCommandExecutor:
         self.robot.movel([-377.125,255.332,240.521,2.071931,3.182989,266.245088],[378.117,294.847,282.763,358.535489,-27.296138,266.325440])
 
     def movel_one_arm(self):
-        self.robot.movel_model(0,[-377.125,255.332,240.521,2.071931,3.182989,266.245088])
+        self.robot.movel_model(0,[-410.964,187.263,266.909,180,0,90])
 
     def move_arm_by_tool_offset(
         self,

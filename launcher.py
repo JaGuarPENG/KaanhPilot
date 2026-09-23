@@ -1,9 +1,8 @@
-"""双击入口的 Python 启动程序。只组装配置与启动原服务，不改机器人动作逻辑。"""
+"""统一网页与订单 API 启动入口，沿用现有本机配置。"""
 import json
+import ipaddress
 import os
 from pathlib import Path
-import runpy
-import shutil
 import signal
 import socket
 import sys
@@ -16,7 +15,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config/launcher"
 
 # ROOT = Path(__file__).resolve().parent
-ROLE = 'backend'
 
 
 def load_config():
@@ -63,21 +61,26 @@ def check_port(host, port):
             raise RuntimeError(f'端口 {port} 无法监听，可能已有服务运行；请先关闭旧窗口或修改端口。') from None
 
 
-def prepare_frontend_data(config):
-    inventory = local_path(config['inventory_file'])
-    history = local_path(config['history_file'])
-    if inventory.resolve() == history.resolve():
-        raise ValueError('库存文件与任务历史必须使用不同路径')
-    # 已有数据保持原样：启动程序不会补库存，也不会清空旧任务。
-    if inventory.exists() != history.exists():
-        raise RuntimeError('库存和历史文件只有一个存在，请恢复配套文件，避免丢失任务记录。')
-    if not inventory.exists():
-        inventory.parent.mkdir(parents=True, exist_ok=True)
-        history.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(DEFAULT_CONFIG_PATH / 'data/inventory.json', inventory)
-        history.write_text(json.dumps({'schema_version':1,'revision':0,'active_task_id':None,'tasks':{}},indent=2),encoding='utf-8')
-        print('已创建独立演示库存和空任务历史；以后启动会沿用它们。',flush=True)
-    return inventory, history
+def print_access_addresses(host, port):
+    """只打印当前监听范围内的候选地址；网络检测失败不影响设备服务。"""
+    from frontend.ipad_network import detect_lan_addresses
+    local_host = '127.0.0.1' if host in ('', '0.0.0.0') else host
+    print(f'本机网页: http://{local_host}:{port}', flush=True)
+    try:
+        loopback = host.lower() == 'localhost' or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = host.lower() == 'localhost'
+    if loopback:
+        print('当前仅允许本机访问；iPad 访问需在 launcher_config.json 中设置 host 为 0.0.0.0。', flush=True)
+        return
+    try:
+        addresses = detect_lan_addresses() if host in ('', '0.0.0.0') else [host]
+    except (RuntimeError, ValueError) as error:
+        print(f'未能检测 iPad 访问地址：{error}。服务继续启动，可通过 ipconfig 查看本机 IPv4。', flush=True)
+        return
+    for address in addresses:
+        print(f'iPad 访问地址: http://{address}:{port}', flush=True)
+    print('请等待设备初始化完成，并让 iPad 与电脑连接同一局域网；多地址时选择对应网络的地址。', flush=True)
 
 
 def open_when_ready(port, done):
@@ -87,9 +90,9 @@ def open_when_ready(port, done):
             return
         try:
             # 仅确认本地页面服务已启动；后端未就绪时仍可打开网页查看状态。
-            with urlopen(url+'/api/health',timeout=1) as response:
-                data = json.load(response)
-            if 'items' in data:
+            with urlopen(url+'/', timeout=1) as response:
+                ready = response.status == 200
+            if ready:
                 if not done.is_set():
                     webbrowser.open(url)
                 return
@@ -111,52 +114,22 @@ def main():
             os.execv(str(executable),[str(executable),'-B','-u',str(Path(__file__).resolve())])
     if sys.version_info < (3,10):
         raise RuntimeError('需要 Python 3.10 或更高版本；可在配置文件指定 python_executable。')
-    token = config.get('api_token','')
-    if not isinstance(token,str) or not token or not token.isascii() or '\r' in token or '\n' in token:
-        raise ValueError('api_token 请使用非空英文、数字或 ASCII 符号，且两端完全一致。')
-    port = config.get('port')
-    if isinstance(port,bool) or not isinstance(port,int) or not 1 <= port <= 65535:
-        raise ValueError('port 必须是 1～65535 的整数')
-    os.chdir(DEFAULT_CONFIG_PATH)
-    sys.path.insert(0,str(DEFAULT_CONFIG_PATH))
+    dry_run = config.get('dry_run', True)
+    if not isinstance(dry_run, bool):
+        raise ValueError('dry_run must be true or false')
+    host, port = config.get('host', '127.0.0.1'), config.get('port', 8088)
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise ValueError('port must be an integer from 1 to 65535')
     lock = lock_launcher()
     done = threading.Event()
     try:
-        if ROLE == 'frontend':
-            from urllib.parse import urlsplit
-            backend_url = config.get('backend_url','').rstrip('/')
-            parsed = urlsplit(backend_url)
-            if parsed.scheme not in ('http','https') or not parsed.hostname or parsed.username or parsed.password:
-                raise ValueError('backend_url 请填写机器人电脑地址，例如 http://192.168.1.50:8088')
-            if not isinstance(config.get('open_browser',True),bool):
-                raise ValueError('open_browser 必须为 true 或 false')
-            check_port('127.0.0.1',port)
-            inventory,history = prepare_frontend_data(config)
-            os.environ['KAANH_API_URL'] = backend_url
-            os.environ['KAANH_API_TOKEN'] = token
-            script = DEFAULT_CONFIG_PATH / 'server.py'
-            args = ['--mode','real','--host','127.0.0.1','--port',str(port),'--data',str(inventory),'--tasks-data',str(history)]
-            print(f'前端启动：连接后端 {backend_url}\n页面地址：http://127.0.0.1:{port}',flush=True)
-            if config.get('open_browser',True):
-                threading.Thread(target=open_when_ready,args=(port,done),daemon=True).start()
-        else:
-            dry_run = config.get('dry_run')
-            if not isinstance(dry_run,bool):
-                raise ValueError('dry_run 必须为 true 或 false')
-            host = config.get('host','0.0.0.0')
-            check_port(host,port)
-            os.environ['ROBOT_API_TOKEN'] = token
-            script = PROJECT_ROOT / 'agent_api.py'
-            task_file = local_path(config['simulation_tasks_file' if dry_run else 'robot_tasks_file'])
-            args = ['--host',host,'--port',str(port),'--tasks-data',str(task_file)]
-            if dry_run:
-                args.append('--dry-run')
-            print('后端模式：'+('无硬件测试（不连接机器人）' if dry_run else '真实机器人（启动时登录、使能并设置速度）'),flush=True)
-            print(f'HTTP 端口：{port}；模式保存在 launcher_config.json 的 dry_run 字段。',flush=True)
-        print('保持此窗口运行。Ctrl+C 退出服务；退出服务不代表停止机械臂。',flush=True)
-        sys.argv = [str(script),*args]
-        # 在当前进程运行原服务，Ctrl+C 交给原服务的资源清理逻辑处理。
-        runpy.run_path(str(script),run_name='__main__')
+        check_port(host, port)
+        from frontend.server import serve
+        print_access_addresses(host, port)
+        print('Mode: ' + ('simulation' if dry_run else 'real hardware'), flush=True)
+        if config.get('open_browser', True):
+            threading.Thread(target=open_when_ready, args=(port, done), daemon=True).start()
+        serve(config, PROJECT_ROOT / 'config')
     finally:
         done.set()
         lock.close()

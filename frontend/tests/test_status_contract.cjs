@@ -1,41 +1,35 @@
 const assert = require('node:assert/strict');
+const test = require('node:test');
+const model = require('../dist/queue-model.js');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const test = require('node:test');
-
-// Exercise the actual response validator without starting a robot or browser.
-const source = fs.readFileSync(`${__dirname}/../dist/app.js`, 'utf8');
-const validator = source.slice(source.indexOf('  function accept(data) {'), source.indexOf('  function showTask(task) {'));
-const originals = ['water', 'cola', 'oolong_tea', 'potato_chips', 'cookies', 'chocolate'];
-const products = [...originals, 'americano', 'latte', 'cappuccino'];
-function validate(items) {
-  const context = vm.createContext({
-    cards: products.map(id => ({
-      dataset: {item:id},
-      closest: () => ({dataset:{category:originals.includes(id) ? 'drinks' : 'coffee'}})
-    })),
-    state:null, online:false,
-    data:{revision:1, mode:'real', dry_run:true, ready:true, active_task:null, items}
-  });
-  vm.runInContext(`${validator}\naccept(data);`, context);
-  return context;
-}
-const inventory = () => Object.fromEntries(products.map(id => [id, {name:id, available:1}]));
-test('complete nine-product gateway enables coffee inventory', () => {
-  const result = validate(inventory());
-  assert.equal(result.online, true);
-  assert.equal(result.state.items.water.available, 1);
-  assert.equal(result.state.items.americano.available, 1);
+test('late poll cannot regress a newer order snapshot', () => {
+  const source = fs.readFileSync(`${__dirname}/../dist/app.js`, 'utf8');
+  const remember = source.slice(source.indexOf('  function remember(order) {'), source.indexOf('  function refreshItems() {'));
+  const context = vm.createContext({model, orders:new Map(), aliases:new Map(), stock:{}, terminal:new Set(['succeeded','failed','cancelled'])});
+  vm.runInContext(remember + `
+    remember({order_id:'1',item_id:'water',status:'failed',error_code:'out_of_stock',updated_at:20});
+    remember({order_id:'1',item_id:'water',status:'running',updated_at:10});`, context);
+  assert.equal(context.orders.get('1').status, 'failed');
+  assert.equal(context.stock.water, 0);
 });
-test('missing coffee inventory rejects incomplete gateway response', () => {
-  const items = inventory(); delete items.americano;
-  assert.throws(() => validate(items), /设备状态接口格式不正确/);
+test('accepts raw Runner status and queue, rejects broken contracts', () => {
+  assert.equal(model.validRunner({state:'idle', accepting_orders:true}, {capacity:10,current_order:null,pending_orders:[]}), true);
+  assert.equal(model.validRunner({accepting_orders:true}, {pending_orders:[]}), false);
 });
-test('missing original inventory still rejects the response', () => {
-  const items = inventory(); delete items.water;
-  assert.throws(() => validate(items), /设备状态接口格式不正确/);
+test('only queued and paused orders can be cancelled', () => {
+  assert.equal(model.canCancel({status:'queued'}), true);
+  assert.equal(model.canCancel({status:'paused'}), true);
+  assert.equal(model.canCancel({status:'running'}), false);
 });
-test('registered coffee inventory must still be valid', () => {
-  assert.throws(() => validate({...inventory(), americano:{name:'美式', available:2}}), /设备状态接口格式不正确/);
-  assert.equal(validate({...inventory(), americano:{name:'美式', available:1}}).online, true);
+test('stock updates only for explicit stock failure, applies to shared task aliases', () => {
+  const stock = {};
+  model.updateStock(stock, {item_id:'water', status:'paused', error_code:null});
+  assert.equal(stock.water, undefined);
+  model.updateStock(stock, {item_id:'water', status:'failed', error_code:'out_of_stock'});
+  assert.equal(stock.water, 0);
+  const items = model.items([{id:'latte',name:'拿铁'}], {latte:'water'}, stock);
+  assert.equal(items.latte.available, 0);
+  model.updateStock(stock, {item_id:'water', status:'succeeded',error_code:null});
+  assert.equal(stock.water, 1);
 });

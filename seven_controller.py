@@ -110,6 +110,11 @@ def control_thread_func():
                     executor.move_init_pose() 
                     print(f"<<< [结束] MoveJ 完成.")
 
+                elif cmd['type'] == 'robot_enable':
+                    print(f">>> [开始] 机器人使能...")
+                    robot.manual_enable()
+                    print(f"<<< [结束] 机器人使能完成.")
+
                 elif cmd['type'] == 'hand_enable':
                     print(f">>> [开始] 灵巧手重置...")
                     grasp_executor.reinitialize(15)
@@ -143,6 +148,7 @@ def control_thread_func():
                 elif cmd['type'] == 'placeing':
                     print(f">>> [开始] 灵巧手放置中...")
                     executor.move_arm_by_tool_offset(0,[35.5,0,0])
+                    # executor.movel_one_arm()
                     print(f"<<< [结束] 灵巧手后退完成.")
 
                 # elif cmd['type'] == 'backward':
@@ -176,11 +182,11 @@ def on_key_press(event):
         cmd_queue.put({'type': 'movej'})
 
     elif event.key == '2':
-        print("\n[Key] 2 -> 灵巧手使能")
-        cmd_queue.put({'type': 'hand_enable'})
-    
+        print("\n[Key] 2 -> 机器人使能")
+        cmd_queue.put({'type': 'robot_enable'})
+
     elif event.key == '3':
-        print("\n[Key] 3 -> 灵巧手回零位")
+        print("\n[Key] 3 -> 灵巧手使能")
         cmd_queue.put({'type': 'hand_enable'})
 
     elif event.key == '4':
@@ -244,7 +250,7 @@ def main():
     print("\n" + "="*60)
     print("   双端口并发模式 (5888:Monitor, 5999:Control)")
     print("   [1] : 回初始位")
-    print("   [2] : 灵巧手使能")
+    print("   [2] : 机器人使能")
     print("   [3] : 灵巧手回零位")
     print("   [4] : 灵巧手预备位")
     print("   [5] : 灵巧手抓取")

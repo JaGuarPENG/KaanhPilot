@@ -13,8 +13,7 @@ from camera.adapters.orbbec.profiles import (
 )
 from camera.adapters.realsense.d435 import RealSenseD435Camera
 from camera.adapters.realsense.profiles import (
-    D435_640X480_30, D435_848X480_30, D435_848X480_60,
-    D435_1280X720_30, D435_1920X1080_30,
+    D435_640X480_30, D435_1280X720_6,
 )
 from camera.contracts.interface import Camera
 from camera.contracts.cam_structs import AlignmentMode, DepthProcessingConfig
@@ -53,10 +52,7 @@ CAMERA_PROFILES: dict[str, dict[str, CameraProfile]] = {
     },
     "realsense_d435": {
         "640@30": D435_640X480_30,
-        "848@30": D435_848X480_30,
-        "848@60": D435_848X480_60,
-        "1280@30": D435_1280X720_30,
-        "1920@30": D435_1920X1080_30,
+        "1280@6": D435_1280X720_6,
     },
 }
 CAMERA_SETTINGS_FILES = {"orbbec_g305": "g305.json", "realsense_d435": "d435.json"}
@@ -225,25 +221,15 @@ class RobotSetup:
         cameras = RobotSetup._load_camera_settings(config_dir / "camera")
         model_data = RobotSetup._read_json(config_dir / "model" / "model_config.json")
         perception_data = RobotSetup._read_json(config_dir / "perception" / "perception_config.json")
-        calibration_data = RobotSetup._read_json(config_dir / "calibration" / "eye_to_hand_cam0.json")
+        # 重新规范化相机外参数据，确保每个相机都有对应的外参
+        extrinsic_data_head = RobotSetup._read_json(config_dir / "calibration" / "eye_in_hand_realsense_head.json")
+        extrinsic_data_left = RobotSetup._read_json(config_dir / "calibration" / "eye_in_hand_orbec_left.json")
+        extrinsic_data_right = RobotSetup._read_json(config_dir / "calibration" / "eye_in_hand_orbec_right.json")
 
-        extrinsic_data_1 = RobotSetup._read_json(config_dir / "calibration" / "eye_to_hand_cam0.json")
-        extrinsic_data_2 = RobotSetup._read_json(config_dir / "calibration" / "eye_in_hand_cam1.json")
-        extrinsic_data_3 = RobotSetup._read_json(config_dir / "calibration" / "eye_in_hand_cam2.json")
-
-        extrinsic = calibration_data.get("camera_pose_in_base")
-        if not isinstance(extrinsic, dict):
-            raise ValueError("eye_to_hand_cam0.json 必须包含 camera_pose_in_base 对象")
-
-        translation = tuple(float(value) for value in extrinsic["translation_m"])
-        quaternion = tuple(float(value) for value in extrinsic["quaternion_xyzw"])
-        if len(translation) != 3 or len(quaternion) != 4:
-            raise ValueError("camera_pose_in_base 必须包含 3 个原点坐标值和 4 个旋转四元数值")
-        
         cam_extrinsic = RobotCameraExtrinsic(
-            cam_0_extrinsic=extrinsic_data_1.get("camera_pose_in_base"),
-            cam_1_extrinsic=extrinsic_data_2.get("camera_pose_in_end"),
-            cam_2_extrinsic=extrinsic_data_3.get("camera_pose_in_end"),
+            cam_0_extrinsic=extrinsic_data_head.get("camera_pose_in_end"),
+            cam_1_extrinsic=extrinsic_data_left.get("camera_pose_in_end"),
+            cam_2_extrinsic=extrinsic_data_right.get("camera_pose_in_end"),
         )
 
         localization = LocalizationConfig(

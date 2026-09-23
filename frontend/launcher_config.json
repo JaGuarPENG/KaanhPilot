@@ -1,9 +1,0 @@
-{
-  "python_executable": "",
-  "api_token": "test",
-  "backend_url": "http://127.0.0.1:9090",
-  "lan_ip": "",
-  "port": 8080,
-  "open_browser": true,
-  "history_file": "data/launcher_history.json"
-}

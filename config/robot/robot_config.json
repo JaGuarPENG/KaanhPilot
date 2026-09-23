@@ -3,7 +3,7 @@
   "monitor_port": 5888,
   "control_port": 5999,
   "udp_port": 9998,
-  "timeout_s": 5.0,
+  "timeout_s": 60.0,
   "user": "Engineer",
   "password": "000000"
 }

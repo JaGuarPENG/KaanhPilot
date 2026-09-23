@@ -304,9 +304,6 @@ class SnapShotCommand:
             model_state = get_model(self._robot_model_id)
             if model_state is not None:
                 tcp_pq = getattr(model_state, "tcp_pq", None)
-        if tcp_pq is None and self._robot_model_id == 0:
-            # 兼容当前 RobotState 为臂 1 保留的顶层字段。
-            tcp_pq = getattr(state, "tcp_pq", None)
         try:
             normalized = [float(value) for value in tcp_pq]
         except (TypeError, ValueError, OverflowError) as error:

@@ -2,77 +2,42 @@
 (() => {
   const config = window.REACH_CONFIG;
   const cards = [...document.querySelectorAll(".drink-card")];
-  const grids = [...document.querySelectorAll(".category-panel")];
-  const tabs = [...document.querySelectorAll('[role="tab"]')];
   const byId = id => document.getElementById(id);
-  const categorySwitch = document.querySelector(".category-switch");
-  const categories = {
-    snacks: {title:"想吃点什么？", description:"选择一款零食，即可发送抓取指令。"},
-    drinks: {title:"想喝点什么？", description:"选择一款饮料，即可发送抓取指令。"},
-    coffee: {title:"来杯咖啡吧。", description:"选择喜欢的风味，开启一刻咖啡时光。"}
-  };
   const stop = byId("stop-button");
   let state = null, online = false, writing = false, uncertain = false;
-  let activeCategory = "drinks", trackedTask = null, requestId = null, syncing = null;
-  let lastTerminal = null;
-  let observedItem = null, cameraPhase = "idle", menuOpen = false;
-  const workspace = byId("workspace"), selectionStage = byId("selection-stage");
-  const menuToggle = byId("product-menu-toggle"), returnProducts = byId("return-products");
+  let trackedTask = null, syncing = null;
   let testingStock = false;
-  const phases = {sending:"正在发送请求", queued:"等待抓取", running:"正在抓取", stopping:"正在停止",
-    recognizing:"正在拍照识别", recognized:"识别已完成", not_detected:"未检测到矿泉水", checking:"正在确认库存", picking:"正在抓取", placed:"放置已完成", completed:"抓取已完成", stopped:"任务已停止", failed:"抓取未完成", needs_attention:"等待确认", offline:"连接恢复中"};
-
-  function observe(itemId, phase) {
-    if (!cards.some(card => card.dataset.item === itemId)) return;
-    const entering = observedItem === null;
-    const focusWasInPicker = selectionStage.contains(document.activeElement);
-    if (observedItem !== itemId) menuOpen = false;
-    observedItem = itemId;
-    cameraPhase = phase;
-    renderCameraWorkspace();
-    if (entering || (focusWasInPicker && !menuOpen)) menuToggle.focus({preventScroll:true});
-    if (entering && window.scrollY > 120) workspace.scrollIntoView({behavior:"auto", block:"start"});
+  let activePage = "shop";
+  const pageScroll = {shop:0, orders:0};
+  const dialog = byId('maintenance-dialog');
+  function setPage(page) {
+    if (!['shop','orders'].includes(page) || page === activePage) return;
+    pageScroll[activePage] = window.scrollY;
+    activePage = page;
+    byId('shop-page').hidden = page !== 'shop';
+    byId('order-page').hidden = page !== 'orders';
+    byId('order-summary').hidden = page !== 'shop';
+    document.querySelectorAll('[data-page]').forEach(button => {
+      if (button.dataset.page === page) button.setAttribute('aria-current', 'page');
+      else button.removeAttribute('aria-current');
+    });
+    window.scrollTo({top:pageScroll[page], behavior:'instant'});
   }
-  function renderCameraWorkspace() {
-    const observing = observedItem !== null;
-    workspace.classList.toggle("is-observing", observing);
-    byId("capture-menu").hidden = !observing;
-    byId("camera-workspace").hidden = !observing;
-    selectionStage.classList.toggle("is-open", menuOpen);
-    selectionStage.inert = observing && !menuOpen;
-    selectionStage.setAttribute("aria-hidden", String(observing && !menuOpen));
-    menuToggle.setAttribute("aria-expanded", String(menuOpen));
-    grids.forEach(panel => {panel.hidden = observing ? false : panel.dataset.category !== activeCategory;});
-    returnProducts.disabled = busy();
-    if (!observing) return;
-    const card = cards.find(card => card.dataset.item === observedItem);
-    const thumbnail = card.querySelector(".drink-image");
-    byId("capture-thumbnail").className = thumbnail.className + " capture-thumbnail";
-    byId("capture-item").textContent = card.querySelector(".drink-name").textContent;
-    const phase = online ? cameraPhase : "offline";
-    const simulationPhases = {checking:"模拟库存确认", picking:"正在模拟拿取", placed:"模拟放置完成", completed:"模拟拿取已完成"};
-    byId("capture-phase").textContent = (state?.dry_run ? simulationPhases[phase] : null) || phases[phase] || "等待确认";
-    byId("capture-indicator").dataset.phase = phase;
-    cards.forEach(item => item.classList.toggle("is-current", item.dataset.item === observedItem));
-  }
-  menuToggle.addEventListener("click", () => {menuOpen = !menuOpen; renderCameraWorkspace();});
-  selectionStage.addEventListener("keydown", event => {
-    if (event.key === "Escape" && observedItem) {
-      menuOpen = false; renderCameraWorkspace(); menuToggle.focus();
-    }
+  document.querySelectorAll('[data-page]').forEach(button => button.addEventListener('click', () => setPage(button.dataset.page)));
+  byId('view-order').addEventListener('click', () => {
+    setPage('orders');
+    byId('order-heading').setAttribute('tabindex', '-1');
+    byId('order-heading').focus({preventScroll:true});
   });
-  returnProducts.addEventListener("click", () => {
-    if (busy()) return;
-    const selectedCard = cards.find(card => card.dataset.item === observedItem);
-    observedItem = null; menuOpen = false;
-    cards.forEach(card => card.classList.remove("is-current"));
-    if (selectedCard) setCategory(selectedCard.closest(".category-panel").dataset.category);
-    render();
-    selectedCard?.focus({preventScroll:true});
-  });
+  byId('maintenance-toggle').addEventListener('click', () => dialog.showModal());
+  byId('maintenance-close').addEventListener('click', () => dialog.close());
+  // Reserve the measured dock height even with larger text or a device safe area.
+  const dock = document.querySelector('.bottom-dock');
+  new ResizeObserver(() => document.documentElement.style.setProperty('--dock-height', dock.getBoundingClientRect().height + 'px')).observe(dock);
   // 每个画面单独配置；接入图片/MJPEG 或视频时仅替换 config.js 中的源地址。
   document.querySelectorAll("[data-camera]").forEach(frame => {
-    const source = config.cameras?.[frame.dataset.camera];
+    const name = frame.dataset.camera;
+    const source = config.cameras?.[name];
     if (!source?.src) return;
     const original = frame.querySelector(".camera-image");
     if (source.demo === false) original.alt = ({head:"头部", left:"左手", right:"右手"}[frame.dataset.camera]) + "相机画面";
@@ -89,7 +54,18 @@
     if (source.type === "snapshot") {
       let objectUrl = null;
       const refresh = async () => {
-        if (observedItem !== null && !document.hidden) {
+        const available = state?.cameras?.[name] === true;
+        if (state && !available) {
+          if (objectUrl) {URL.revokeObjectURL(objectUrl); objectUrl = null;}
+          if (!media.getAttribute('src')?.startsWith('assets/')) media.src = `assets/camera-${name}.svg`;
+          media.alt = '相机示意画面';
+          frame.querySelector('.camera-error').hidden = true;
+          frame.querySelector('.placeholder-note').textContent = '示意画面 · 非实时';
+        }
+        if (!online && available) frame.querySelector('.camera-error').hidden = false;
+        if (activePage === "orders" && !document.hidden && online && available) {
+          frame.querySelector('.placeholder-note').textContent = '相机画面';
+          media.alt = ({head:'头部', left:'左手', right:'右手'}[frame.dataset.camera]) + '相机画面';
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 5000);
           try {
@@ -106,321 +82,311 @@
         }
         setTimeout(refresh, source.refreshMs || 200);
       };
-      media.removeAttribute("src");
-      frame.querySelector(".camera-error").hidden = false;
+      frame.querySelector(".camera-error").hidden = true;
       refresh();
     } else {
       media.src = source.src;
     }
-    frame.querySelector(".placeholder-note").textContent = source.demo === false ? "相机画面" : "示意画面 · 非实时";
+    frame.querySelector(".placeholder-note").textContent = source.type === "snapshot" ? "示意画面 · 非实时" : source.demo === false ? "相机画面" : "示意画面 · 非实时";
   });
-  const cameraNames = {head:"头部", left:"左手", right:"右手"};
-  const liveViews = Object.keys(cameraNames).filter(key => config.cameras?.[key]?.demo === false);
-  const demoViews = Object.keys(cameraNames).filter(key => !liveViews.includes(key));
-  if (liveViews.length) {
-    const liveLabel = liveViews.map(key => cameraNames[key]).join("、");
-    const demoLabel = demoViews.map(key => cameraNames[key]).join("、");
-    document.querySelector(".demo-label").lastChild.textContent = liveLabel + "相机" + (demoLabel ? " · " + demoLabel + "示意" : "");
-    document.querySelector(".camera-footnote p span").textContent = liveLabel + "为实时相机画面。" + (demoLabel ? demoLabel + "为示意画面。" : "");
-  }
-  const terminal = new Set(["completed", "stopped", "failed"]);
-  const busy = () => writing || testingStock || uncertain || Boolean(state?.active_task);
-
-  function status(title, detail, kind = "idle") {
-    byId("status-title").textContent = title;
-    byId("status-detail").textContent = detail;
-    const symbol = byId("status-symbol");
-    symbol.className = "status-symbol " + kind;
-    symbol.innerHTML = kind === "idle" ? '<span class="idle-symbol"></span>' : kind === "success" ? "✓" : kind === "error" ? "!" : "";
-  }
-  function step(number) {
-    byId("progress-fill").style.background = "";
-    document.querySelectorAll("[data-step]").forEach(el => {
-      if (el.dataset.step === "3") el.textContent = "放置完成";
+  function updateCameraLabels() {
+    const names = {head:'头部', left:'左手', right:'右手'};
+    const live = Object.keys(names).filter(key => {
+      const source = config.cameras?.[key];
+      return source?.demo === false && (source.type !== 'snapshot' || state?.cameras?.[key] === true);
     });
-    byId("task-progress").hidden = number === 0;
-    byId("progress-fill").style.width = [0,12,57,100][number] + "%";
-    document.querySelectorAll("[data-step]").forEach(el => el.classList.toggle("active",Number(el.dataset.step) <= number));
+    document.querySelector('.demo-label').lastChild.textContent = live.length ? live.map(key => names[key]).join('、') + '相机' : '示意画面';
+    document.querySelector('.camera-footnote p span').textContent = live.length === 3 ? '三个视角均为实时画面。' : live.length ? '未接入的视角显示示意画面。' : '当前为示意画面，非实时影像。';
+  }
+
+  const model = window.QueueModel;
+  const terminal = new Set(['succeeded', 'failed', 'cancelled']);
+  const busy = () => writing || testingStock || uncertain;
+  let selectedOrder = null, pendingRequest = null;
+  const orders = new Map(), aliases = new Map(), stock = {};
+  const products = cards.map(card => ({id:card.dataset.item, name:card.querySelector('.drink-name').textContent}));
+  let runtimeId = null;
+  try {pendingRequest = JSON.parse(sessionStorage.getItem('kaanh-direct-pending'));} catch {}
+  uncertain = Boolean(pendingRequest);
+  function persistPending(value) {
+    pendingRequest = value; uncertain = Boolean(value);
+    try {
+      if (value) sessionStorage.setItem('kaanh-direct-pending', JSON.stringify(value));
+      else sessionStorage.removeItem('kaanh-direct-pending');
+    } catch {}
+  }
+  function remember(order) {
+    const previous = orders.get(order.order_id);
+    if (previous && (previous.updated_at > order.updated_at ||
+        (terminal.has(previous.status) && !terminal.has(order.status)))) return previous;
+    if (!previous || previous.updated_at !== order.updated_at || previous.status !== order.status) model.updateStock(stock, order);
+    const display = {...order, execution_item_id:order.item_id, item_id:aliases.get(order.order_id) || order.item_id,
+      allowed_actions:model.canCancel(order) ? ['cancel'] : []};
+    orders.set(order.order_id, display);
+    // 仅保留有限的本页历史；活动订单一直跟踪到终态。
+    const ended = [...orders.values()].filter(value => terminal.has(value.status));
+    ended.slice(0, Math.max(0, ended.length - 20)).forEach(value => {
+      if (value.order_id !== trackedTask) {orders.delete(value.order_id); aliases.delete(value.order_id);}
+    });
+    return display;
+  }
+  function refreshItems() {
+    if (state) state.items = model.items(products, config.itemTasks, stock);
+  }
+  function status(title, detail, kind = 'idle') {
+    byId('status-title').textContent = title;
+    byId('status-detail').textContent = detail;
+    byId('summary-title').textContent = title;
+    byId('summary-detail').textContent = detail;
+    const mappedItem = selectedOrder && selectedOrder.item_id !== selectedOrder.execution_item_id;
+    byId('summary-detail').hidden = kind !== 'error' && Boolean(selectedOrder) && !mappedItem;
+    byId('order-summary').dataset.kind = kind;
+    const symbol = byId('status-symbol');
+    symbol.className = 'status-symbol ' + kind;
+    symbol.textContent = kind === 'success' ? '✓' : kind === 'error' ? '!' : '';
+  }
+  function step(order) {
+    byId('task-progress').hidden = !order;
+    byId('summary-progress').hidden = !order;
+    const stages = model.stages(order);
+    document.querySelectorAll('[data-step]').forEach((el, i) => {
+      const stage = stages[i];
+      el.dataset.status = stage.status;
+      el.replaceChildren(document.createTextNode(stage.label));
+      const detail = document.createElement('small');
+      detail.textContent = model.statusLabel(stage.status);
+      el.append(detail);
+    });
+    byId('summary-progress').replaceChildren(...[...document.querySelectorAll('[data-step]')].map(el => {const clone = el.cloneNode(true); clone.removeAttribute('data-step'); return clone;}));
+    byId('progress-fill').style.width = model.progress(order) + '%';
+    byId('progress-fill').style.background = order?.status === 'failed' ? '#b54637' : '';
+  }
+  let detailOrderId = null;
+  const listVersions = new Map();
+  byId('detail-close').addEventListener('click', () => byId('order-detail-dialog').close());
+  function renderOrderDetail() {
+    const order = orders.get(detailOrderId);
+    if (!order) {byId('order-detail-dialog').close(); return;}
+    byId('detail-name').textContent = state.items[order.item_id]?.name || order.item_id;
+    byId('detail-status').textContent = model.statusLabel(order.status) + ' · ' + order.order_id;
+    const mapped = order.item_id !== order.execution_item_id ? `当前实际执行${state.items[order.execution_item_id]?.name || order.execution_item_id}任务。` : '';
+    byId('detail-message').textContent = mapped + (order.message || '');
+    byId('detail-progress').replaceChildren(...model.stages(order).map(stage => {
+      const item = document.createElement('li'); item.dataset.status = stage.status;
+      item.textContent = stage.label;
+      const status = document.createElement('small'); status.textContent = model.statusLabel(stage.status);
+      item.append(status); return item;
+    }));
+  }
+  function updateOrderList(id, values, history) {
+    const version = JSON.stringify([values, writing, online]);
+    if (listVersions.get(id) === version) return;
+    listVersions.set(id, version);
+    const list = byId(id);
+    const focusRow = document.activeElement?.closest('.queue-row');
+    const focusId = focusRow?.dataset.orderId;
+    const focusClass = document.activeElement?.className;
+    const scrollTop = list.scrollTop;
+    list.replaceChildren(...values.map((order, i) => orderRow(order, i, history)));
+    list.scrollTop = scrollTop;
+    if (focusId && focusRow.parentElement === null) {
+      const replacement = [...list.children].find(row => row.dataset.orderId === focusId);
+      replacement?.querySelector(focusClass === 'queue-cancel' ? '.queue-cancel' : '.queue-select')?.focus({preventScroll:true});
+    }
+  }
+  function orderRow(order, index, history = false) {
+    const row = document.createElement('li');
+    row.className = 'queue-row';
+    row.dataset.orderId = order.order_id;
+    const select = document.createElement('button');
+    select.className = 'queue-select';
+    const name = state.items[order.item_id]?.name || order.item_id;
+    select.textContent = (history ? '' : index === 0 && order.status !== 'queued' ? '当前 · ' : '等待 · ') + name;
+    const detail = document.createElement('small');
+    detail.textContent = model.statusLabel(order.status) + ' · ' + order.order_id.slice(0, 8);
+    select.append(detail);
+    select.addEventListener('click', () => {detailOrderId = order.order_id; renderOrderDetail(); byId('order-detail-dialog').showModal();});
+    row.append(select);
+    if (order.allowed_actions?.includes('cancel')) {
+      const cancel = document.createElement('button');
+      cancel.className = 'queue-cancel'; cancel.textContent = order.status === 'paused' ? '取消并回位' : '取消';
+      cancel.disabled = writing || !online;
+      cancel.addEventListener('click', () => cancelOrder(order.order_id));
+      row.append(cancel);
+    }
+    return row;
+  }
+  function renderQueue() {
+    if (!state) return;
+    const queue = state.queue;
+    const orders = queue.pending_orders;
+    byId('queue-panel').hidden = false;
+    byId('queue-count').textContent = `等待 ${queue.pending_count} / ${queue.capacity}`;
+    byId('queue-preview').textContent = orders.length ? orders.map(order => state.items[order.item_id]?.name || order.item_id).join('、') : '暂无等待订单';
+    updateOrderList('queue-list', orders, false);
+    const note = byId('queue-note');
+    note.textContent = state.fatal_error ? '设备故障：' + state.fatal_error :
+      queue.current_order?.status === 'paused' ? '当前订单等待处理，后续订单暂不执行。' : '';
+    note.hidden = !note.textContent;
+    updateOrderList('recent-orders', state.recent_orders.filter(order => terminal.has(order.status)).slice(0, 10), true);
+    if (byId('order-detail-dialog').open) renderOrderDetail();
   }
   function render() {
     const locked = busy();
-    renderCameraWorkspace();
+    refreshItems();
+
     cards.forEach(card => {
       const item = state?.items[card.dataset.item];
       const soldOut = item?.available === 0;
-      const actionLabel = card.closest('.category-panel').dataset.category === 'coffee' ? '点击制作' : '点击抓取';
-      card.disabled = locked || !online || !state?.ready || item?.available !== 1;
+      card.disabled = locked || !online || !model.canSubmit(state, card.dataset.item);
       card.classList.toggle('sold-out', soldOut);
-      card.setAttribute('aria-label', (item?.name || card.querySelector('.drink-name').textContent) + (soldOut ? '，已售尽' : '，' + actionLabel));
-      const selected = state?.active_task?.item_id === card.dataset.item;
-      card.classList.toggle("selected",selected);
-      card.setAttribute("aria-pressed",String(selected));
-      card.querySelector(".card-action").innerHTML = soldOut ? "已售尽" : actionLabel + ' <span class="arrow" aria-hidden="true">↗</span>';
+      card.setAttribute('aria-label', (item?.name || card.querySelector('.drink-name').textContent) + (soldOut ? '，已售尽' : '，加入队列'));
+      const selected = state?.queue.current_order?.item_id === card.dataset.item;
+      card.classList.toggle('selected', selected); card.setAttribute('aria-pressed', String(selected));
+      card.querySelector('.card-action').textContent = soldOut ? '已售尽' : '加入队列';
     });
-    byId('inventory-test').hidden = !online || state?.dry_run !== true;
-    byId('inventory-test-form').querySelectorAll('select, button').forEach(el => {el.disabled = locked || !online;});
-    grids.forEach(grid => grid.classList.toggle("busy",locked));
-    tabs.forEach(tab => {tab.disabled = locked;});
-    categorySwitch.setAttribute("aria-busy",String(locked));
-    stop.disabled = state?.mode === "real" || writing || !online || !(state?.active_task || uncertain);
-    byId("connection-label").textContent = !online ? "连接中断" : state.dry_run === true ? "模拟模式" : state.ready ? "设备已就绪" : "设备未就绪";
-    byId("connection").className = "connection " + (online ? "online" : "error");
-    // 模式说明是可选元素；HTML 删除它后，状态轮询仍须正常启动。
-    const modeNote = byId("mode-note");
-    if (modeNote) {
-      modeNote.textContent = state?.mode === "real"
-        ? "演示 · 网页停止不可用，请使用控制器停止；状态不明时暂停拿取。"
-        : "服务端演示 · 任务已持久保存";
-    }
-  }
-  function setCategory(category, resetStatus = true) {
-    if (busy() || !categories[category] || category === activeCategory) return;
-    activeCategory = category;
-    categorySwitch.dataset.category = category;
-    const activeIndex = tabs.findIndex(tab => tab.dataset.category === category);
-    tabs.forEach((tab, index) => {
-      const selected = tab.dataset.category === category;
-      const offset = (index - activeIndex + tabs.length) % tabs.length;
-      tab.dataset.position = offset === 0 ? 'center' : offset === 1 ? 'right' : 'left';
-      tab.setAttribute("aria-selected",String(selected));
-      tab.tabIndex = selected ? 0 : -1;
-    });
-    grids.forEach(panel => {panel.hidden = panel.dataset.category !== category;});
-    byId("page-title").textContent = categories[category].title;
-    byId("category-description").textContent = categories[category].description;
-    if (resetStatus && online && state.ready) {step(0);status("准备好，为你取来。","选择喜欢的零食、饮料或咖啡。");}
+    byId('inventory-test').hidden = !online || state?.inventory_test !== true;
+    const occupied = Boolean(state?.queue.current_order || state?.queue.pending_count);
+    byId('inventory-test-form').querySelectorAll('select, button').forEach(el => {el.disabled = locked || occupied || !online;});
+    byId('restock-panel').hidden = !online;
+    byId('uncertain-panel').hidden = !uncertain;
+    byId('uncertain-confirm').disabled = writing || !online;
+    byId('restock-form').querySelectorAll('select, button').forEach(el => {el.disabled = locked || occupied || !online;});
+
+    stop.disabled = writing || !online || !selectedOrder?.allowed_actions?.includes('cancel');
+    stop.textContent = selectedOrder?.status === 'paused' ? '取消并回位' : '取消订单';
+    byId('connection-label').textContent = !online ? '连接中断' : state.fatal_error ? '设备故障' : state.dry_run ? '模拟控制器' : state.accepting_orders ? '可以下单' : '暂不接单';
+    byId('connection').className = 'connection ' + (online && !state?.fatal_error ? 'online' : 'error');
+    renderQueue();
+    byId('status-symbol').hidden = Boolean(selectedOrder);
+    updateCameraLabels();
   }
   async function api(path, body) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(),config.requestTimeoutMs);
+    const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
     try {
-      const response = await fetch(config.apiBase.replace(/\/$/,"") + path, {
-        method: body ? "POST" : "GET", headers: body ? {"Content-Type":"application/json"} : {},
-        body: body ? JSON.stringify(body) : undefined, signal: controller.signal,
-        credentials: "same-origin", cache: "no-store"
+      const response = await fetch(config.apiBase + path, {
+        method: body ? 'POST' : 'GET', headers: body ? {'Content-Type':'application/json', 'X-Kaanh-Request':'1'} : {},
+        body: body ? JSON.stringify(body) : undefined, signal:controller.signal, credentials:'same-origin', cache:'no-store'
       });
       const data = await response.json();
-      if (!response.ok) {const error = new Error(data.error || "请求失败"); error.code = response.status; error.errorCode = data.error_code; throw error;}
+      if (!response.ok) {
+        const error = new Error(data.error?.message || data.error || '请求失败'); error.code = response.status; throw error;
+      }
       return data;
     } finally {clearTimeout(timeout);}
   }
-  function accept(data) {
-    if (!data || !Number.isInteger(data.revision) || !["demo","real"].includes(data.mode)
-        || typeof data.dry_run !== "boolean" || typeof data.ready !== "boolean" || !("active_task" in data)
-        || !cards.every(card => {
-          const item = data.items?.[card.dataset.item];
-          return item && typeof item.name === "string" && [0,1,null].includes(item.available);
-        })) throw new Error("设备状态接口格式不正确");
-    if (state && data.revision < state.revision) return;
-    state = data;
-    online = true;
-  }
   function showTask(task) {
-    if (!task || typeof task.task_id !== "string") throw new Error("任务接口格式不正确");
-    observe(task.item_id, task.recognition ? task.phase : terminal.has(task.status) ? task.status : task.phase || task.status);
-    if (terminal.has(task.status)) {
-      if (lastTerminal !== task.task_id) {
-        const name = state.items[task.item_id]?.name || "物品";
-        step(task.status === "completed" ? 3 : task.status === "failed" ? (task.phase === "checking" ? 1 : 2) : 0);
-        if (task.status === "failed") {
-          byId("progress-fill").style.background = "#b54637";
-        }
-        status(task.status === "completed" ? (state.dry_run ? "模拟拿取完成 · " : "抓取完毕 · ") + name : task.status === "stopped" ? "任务已停止。" : "抓取未完成。",
-          task.status === "completed" ? (state.dry_run ? "模拟流程已完成，未执行机器人动作。" : "动作已收到控制器完成回复。") : "任务已结束，请以设备实际状态为准。",
-          task.status === "completed" ? "success" : task.status === "failed" ? "error" : "idle");
-        if (task.recognition) {
-          const found = task.recognition.detected === true;
-          byId("task-progress").hidden = true;
-          status(found ? "矿泉水识别完成。" : "未检测到矿泉水。",
-            found ? "已完成两次拍照识别，可继续查看左手相机画面。" : "请调整商品位置或相机视角后重试。",
-            found ? "success" : "error");
-        }
-        if (task.error_code === 'out_of_stock') {
-          cameraPhase = 'failed';
-          status(name + '已售尽。', '本次未进行抓取，请选择其他商品。', 'error');
-          showSoldOut(task.item_id);
-        }
-        lastTerminal = task.task_id;
-      }
-      trackedTask = null; requestId = null; uncertain = false;
-      return;
-    }
-    trackedTask = task.task_id;
-    requestId = task.request_id;
-    uncertain = false;
-    step(task.phase === "checking" ? 1 : task.status === "running" ? 2 : 1);
-    if (task.status === "needs_attention") {
-      status("任务结果待确认。", "正在同步设备状态，请勿重复发送抓取指令。", "error");
-      return;
-    }
-    if (task.phase === "recognizing") {
-      byId("task-progress").hidden = true;
-      status("正在拍照识别矿泉水。", "相机将进行两次识别，请保持商品静止。", "working");
-      return;
-    }
-    status(task.phase === "checking" ? "正在确认库存。" : task.status === "running" ? "抓取进行中。" : task.status === "stopping" ? "正在等待停止确认。" : "指令已接收。",
-      state.dry_run ? "正在模拟拿取流程，相机画面是否可用取决于后端连接状态。" : "等待控制器完成回复。","working");
+    if (!task || typeof task.order_id !== 'string') throw new Error('订单接口格式不正确');
+    selectedOrder = task; trackedTask = task.order_id;
+    const product = cards.find(card => card.dataset.item === task.item_id);
+    byId('order-thumbnail').hidden = !product;
+    if (product) byId('order-thumbnail').className = product.querySelector('.drink-image').className + ' order-thumbnail';
+    byId('order-heading').textContent = terminal.has(task.status) ? '最近订单' : task.status === 'queued' ? '等待订单' : '当前订单';
+    const name = state?.items[task.item_id]?.name || task.item_id;
+    step(task);
+    const stages = {pick:'正在抓取', transport_to_dropoff:'正在运输', place:'正在放置', return_and_reset:'已放置，正在返回复位'};
+    const title = task.status === 'running' ? stages[task.current_task_type] || '正在执行' : model.statusLabel(task.status);
+    const fallback = task.item_id !== task.execution_item_id ? `当前实际执行${state.items[task.execution_item_id]?.name || task.execution_item_id}任务。` : '';
+    let detail = task.message || (task.status === 'queued' ? '已加入队列，可继续选择其他商品。' : '任务状态由设备实时同步。');
+    if (task.status === 'paused') detail = task.pause_reason === 'second_detection_failed' ? '第二次识别未找到目标，可取消并回位。' : '目标位置不可达，可取消并回位。';
+    if (task.error_code === 'out_of_stock') detail = '未检测到库存，对应商品已暂停下单。';
+    status(name + ' · ' + (task.error_code === 'out_of_stock' ? '已售尽' : title), fallback + detail,
+      task.status === 'succeeded' ? 'success' : ['failed','paused','needs_attention'].includes(task.status) ? 'error' : terminal.has(task.status) ? 'idle' : 'working');
   }
   async function sync() {
     if (syncing) return syncing;
     syncing = (async () => {
       try {
-        accept(await api(config.statusPath));
-        if (!writing && !testingStock) {
-          if (state.active_task) showTask(state.active_task);
-          else if (uncertain && requestId) {
-            try {
-              const task = await api("/api/requests/" + encodeURIComponent(requestId));
-              accept(await api(config.statusPath));
-              showTask(task);
-            } catch (error) {if (error.code !== 404) throw error;}
-          }
-          else if (trackedTask) {
-            const task = await api(config.taskPath.replace("{taskId}",encodeURIComponent(trackedTask)));
-            accept(await api(config.statusPath));
-            if (state.active_task) showTask(state.active_task); else showTask(task);
-          } else if (!uncertain && !state.ready) status("设备暂未就绪。","请检查服务、设备适配器和安全联锁。","error");
-          else if (!uncertain && ["正在连接设备服务。", "设备暂未就绪。"].includes(byId("status-title").textContent)) status("准备好，为你取来。","选择喜欢的零食、饮料或咖啡。");
+        const [runnerStatus, queue, info] = await Promise.all([
+          api(config.statusPath), api(config.queuePath), api('/api/info')]);
+        if (!model.validRunner(runnerStatus, queue) || typeof info.dry_run !== 'boolean' || typeof info.runtime_id !== 'string')
+          throw new Error('Runner 接口格式不正确');
+        if (runtimeId && runtimeId !== info.runtime_id) {
+          orders.clear(); aliases.clear(); Object.keys(stock).forEach(key => delete stock[key]);
+          trackedTask = null; selectedOrder = null; step(null);
+          byId('order-thumbnail').hidden = true; byId('order-heading').textContent = '当前订单';
         }
-      } catch {
+        runtimeId = info.runtime_id;
+        const active = [...(queue.current_order ? [queue.current_order] : []), ...queue.pending_orders];
+        const activeIds = new Set(active.map(order => order.order_id));
+        // 已离开队列的订单仍需查询，才能看到完成、失败或缺货结果。
+        const missing = [...orders.values()].filter(order => !terminal.has(order.status) && !activeIds.has(order.order_id));
+        for (const order of missing) {
+          try {remember(await api(config.taskPath.replace('{taskId}', encodeURIComponent(order.order_id))));}
+          catch (error) {if (error.code === 404) orders.delete(order.order_id); else throw error;}
+        }
+        state = {...runnerStatus, dry_run:info.dry_run, cameras:info.cameras,
+          inventory_test:info.inventory_test, fatal_error:runnerStatus.fatal_error_message,
+          queue:{capacity:queue.capacity, pending_count:queue.pending_orders.length,
+            current_order:queue.current_order ? remember(queue.current_order) : null,
+            pending_orders:queue.pending_orders.map(remember)}, recent_orders:[]};
+        state.recent_orders = [...orders.values()].reverse();
+        refreshItems(); online = true;
+        if (!writing) {
+          const tracked = orders.get(trackedTask);
+          // 默认跟随 Runner 当前订单，提交或取消等待订单不能抢占执行进度。
+          if (state.queue.current_order) showTask(state.queue.current_order);
+          else if (state.queue.pending_orders.length) showTask(state.queue.pending_orders[0]);
+          else if (tracked) showTask(tracked);
+          else if (state.recent_orders.length) showTask(state.recent_orders[0]);
+          else if (!selectedOrder) status('准备好，为你取来。', '选择商品，加入任务队列。');
+        }
+        if (state.fatal_error) status('设备已暂停服务。', state.fatal_error, 'error');
+        if (uncertain) status('提交结果待核对。', '请求可能已经入队。请核对队列与设备结果，确认后再继续下单。', 'error');
+      } catch (error) {
         online = false;
-        status("正在连接设备服务。","连接恢复前暂停拿取；已发出的任务不会因网页断线自动停止。","error");
+        status(error.code === 401 ? '等待连接设备。' : '连接暂不可用。', error.message, 'error');
       } finally {render();}
     })();
     try {await syncing;} finally {syncing = null;}
   }
-  function newRequestId() {
-    // HTTP 局域网 iPad 也可用，不依赖 randomUUID 的安全上下文。
-    const bytes = new Uint8Array(16);
-    crypto.getRandomValues(bytes);
-    return Array.from(bytes, n => n.toString(16).padStart(2,"0")).join("");
-  }
   async function grab(id) {
-    if (busy() || !online || !state.ready || state.items[id]?.available !== 1) return;
-    writing = true; requestId = newRequestId();
-    menuOpen = false; observe(id, "sending"); render();step(1);
-    status("正在发送抓取指令。","等待服务器检查设备状态。","working");
-    try {showTask(await api(config.grabPath,{item_id:id,request_id:requestId}));}
-    catch (error) {
-      uncertain = !(error.code >= 400 && error.code < 500);
-      if (error.errorCode === 'out_of_stock') showSoldOut(id);
-      if (uncertain) cameraPhase = "needs_attention";
-      else {
-        observedItem = null; menuOpen = false;
-        cards.forEach(card => card.classList.remove("is-current"));
-      }
-      status(uncertain ? "暂时无法确认指令。" : "暂时无法拿取。",
-        uncertain ? "已暂停新请求，正在同步服务器任务；不要重复发送。" : error.message,"error");
-    } finally {
-      writing = false; await sync(); render();
-      if (!observedItem && !uncertain && !busy()) {
-        const card = cards.find(item => item.dataset.item === id);
-        if (card) {
-          // 明确拒绝后恢复来源分类，同时保留错误提示。
-          setCategory(card.closest(".category-panel").dataset.category, false);
-          render();
-          if (!card.disabled) card.focus({preventScroll:true});
-        }
-      }
-    }
-  }
-  function showSoldOut(id) {
-    const item = state?.items[id];
-    if (item) item.available = 0;
-    if (byId('inventory-test-item').value === id) {
-      byId('inventory-test-feedback').textContent = (item?.name || '该商品') + ' · 已确认售尽，可选择“有库存”恢复测试。';
-    }
-    byId('sold-out-title').textContent = (item?.name || '该商品') + '已售尽';
-    const dialog = byId('sold-out-dialog');
-    if (!dialog.open) dialog.showModal();
-  }
-  byId('sold-out-dialog').addEventListener('close', () => {
-    if (busy()) return;
-    const card = cards.find(item => item.dataset.item === observedItem);
-    observedItem = null; menuOpen = false;
-    cards.forEach(item => item.classList.remove('is-current'));
-    if (card) setCategory(card.closest('.category-panel').dataset.category, false);
+    if (busy() || !online || !model.canSubmit(state, id)) return;
+    writing = true;
+    // Runner 没有请求去重接口。超时后禁止自动重发。
+    persistPending({item_id:id, execution_item_id:config.itemTasks[id]});
     render();
-    const next = cards.find(item => !item.disabled && !item.closest('.category-panel').hidden);
-    (next || tabs.find(tab => tab.getAttribute('aria-selected') === 'true'))?.focus({preventScroll:true});
-  });
-  byId('inventory-test-form').addEventListener('submit', async event => {
-    event.preventDefault();
-    if (busy() || !online || state?.dry_run !== true) return;
-    const itemId = byId('inventory-test-item').value;
-    const scenario = byId('inventory-test-scenario').value;
-    testingStock = true; render();
-    byId('inventory-test-feedback').textContent = '正在更新…';
     try {
-      accept(await api('/api/test/inventory', {
-        item_id:itemId, available:scenario === 'sold-out' ? 0 : 1,
-        confirmation_available:scenario === 'available' ? 1 : 0
-      }));
-      byId('inventory-test-feedback').textContent = state.items[itemId].name + ' · ' +
-        (scenario === 'confirmation-empty' ? '下次确认将发现售尽，当前仍可点击。' : scenario === 'sold-out' ? '已设为售尽。' : '已设为有库存。');
+      const order = await api(config.grabPath, {item_id:config.itemTasks[id]});
+      aliases.set(order.order_id, id);
+      persistPending(null); remember(order);
     } catch (error) {
-      byId('inventory-test-feedback').textContent = error.message || '更新失败，请重试。';
-    } finally {testingStock = false; await sync(); render();}
-  });
-  stop.addEventListener("click",async () => {
-    if (stop.disabled) return;
-    writing = true;render();
-    try {showTask(await api(config.stopPath,{task_id:state?.active_task?.task_id || trackedTask,request_id:requestId}));}
-    catch {status("无法确认停止。","不要依赖网页停止按钮；请检查设备，紧急时使用物理急停。","error");}
-    finally {writing = false;await sync();render();}
-  });
-  cards.forEach(card => card.addEventListener("click",() => grab(card.dataset.item)));
-  let drag = null, suppressClickUntil = 0;
-  categorySwitch.addEventListener('pointerdown', event => {
-    if (busy() || !event.isPrimary || event.button !== 0) return;
-    drag = {id:event.pointerId, x:event.clientX, y:event.clientY, dx:0, horizontal:false};
-  });
-  categorySwitch.addEventListener('pointermove', event => {
-    if (!drag || event.pointerId !== drag.id) return;
-    const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
-    if (!drag.horizontal && Math.abs(dy) > Math.max(10, Math.abs(dx))) {drag = null; return;}
-    if (!drag.horizontal && Math.abs(dx) > 8) {
-      drag.horizontal = true;
-      categorySwitch.setPointerCapture(event.pointerId);
-      categorySwitch.classList.add('is-dragging');
-    }
-    if (drag.horizontal) {
-      drag.dx = dx;
-      categorySwitch.style.setProperty('--drag', Math.max(-50, Math.min(50, dx)) + 'px');
-    }
-  });
-  function finishDrag(event) {
-    // Touch starts with implicit capture on the tab; transferring it to the
-    // wheel also emits lostpointercapture on that child, not a cancelled drag.
-    if (event.type === 'lostpointercapture' && event.target !== categorySwitch) return;
-    if (!drag || event.pointerId !== drag.id) return;
-    const gesture = drag;
-    drag = null;
-    categorySwitch.classList.remove('is-dragging');
-    categorySwitch.style.removeProperty('--drag');
-    if (gesture.horizontal) suppressClickUntil = performance.now() + 350;
-    if (event.type === 'pointerup' && Math.abs(gesture.dx) >= 30 && !busy()) {
-      const index = tabs.findIndex(tab => tab.dataset.category === activeCategory);
-      const target = tabs[(index + (gesture.dx < 0 ? 1 : -1) + tabs.length) % tabs.length];
-      setCategory(target.dataset.category);
-      target.focus({preventScroll:true});
-    }
-    if (categorySwitch.hasPointerCapture(event.pointerId)) categorySwitch.releasePointerCapture(event.pointerId);
+      if (error.code >= 400 && error.code < 500) persistPending(null);
+      status('暂时无法确认订单。', error.message, 'error');
+    } finally {writing = false; await sync(); render();}
   }
-  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(type => categorySwitch.addEventListener(type, finishDrag));
-  categorySwitch.addEventListener('click', event => {
-    if (performance.now() < suppressClickUntil) {event.preventDefault(); event.stopImmediatePropagation();}
-  }, true);
-  tabs.forEach((tab,index) => {
-    tab.addEventListener("click",() => setCategory(tab.dataset.category));
-    tab.addEventListener("keydown",event => {
-      if (busy() || !["ArrowLeft","ArrowRight","Home","End"].includes(event.key)) return;
-      event.preventDefault();
-      const target = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
-      setCategory(tabs[target].dataset.category);tabs[target].focus();
-    });
+  async function cancelOrder(id) {
+    if (writing || !online) return;
+    writing = true; render();
+    try {remember(await api('/api/orders/' + encodeURIComponent(id) + '/cancel', {}));}
+    catch (error) {status('取消未完成。', error.message, 'error');}
+    finally {writing = false; await sync(); render();}
+  }
+  stop.addEventListener('click', () => {if (!stop.disabled) cancelOrder(selectedOrder.order_id);});
+  cards.forEach(card => card.addEventListener('click', () => grab(card.dataset.item)));
+  byId('inventory-test-form').addEventListener('submit', async event => {
+    event.preventDefault(); testingStock = true; render();
+    try {
+      const item = config.itemTasks[byId('inventory-test-item').value];
+      await api('/api/test/inventory', {item_id:item, scenario:byId('inventory-test-scenario').value});
+      delete stock[item];
+      byId('inventory-test-feedback').textContent = '场景已更新。提交下一单后，由 Runner 返回模拟检测结果。';
+    } catch (error) {byId('inventory-test-feedback').textContent = error.message;}
+    finally {testingStock = false; await sync(); render();}
   });
-  status("正在连接设备服务。","请确认已使用 python3 server.py 启动本地服务。","working");
+  byId('restock-item').replaceChildren(...cards.map(card => {
+    const option = document.createElement('option'); option.value = card.dataset.item;
+    option.textContent = card.querySelector('.drink-name').textContent; return option;
+  }));
+  byId('restock-form').addEventListener('submit', async event => {
+    event.preventDefault(); testingStock = true; render();
+    try {delete stock[config.itemTasks[byId('restock-item').value]]; byId('restock-feedback').textContent = '本页已允许重试，下一单由 Runner 重新检测。';}
+    catch (error) {byId('restock-feedback').textContent = error.message;}
+    finally {testingStock = false; await sync(); render();}
+  });
+  byId('uncertain-confirm').addEventListener('click', () => {persistPending(null); sync();});
+  status("正在连接设备服务。","正在连接任务队列。","working");
   render();
   async function loop() {await sync();setTimeout(loop,config.pollIntervalMs);}
   loop();

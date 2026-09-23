@@ -4,22 +4,16 @@
 `profiles.py`（明确的 RGB-D 流组合）和 `filters.py`（官方 SDK 滤波链）。
 输出统一的 `AlignedRGBDObservation`，SDK 对象不会流入感知或规划模块。
 
-## Profile 来源
+## 项目使用的 Profile
 
-- [D435 官方产品页](https://www.realsenseai.com/cn/products/d435/)
-- [该页链接的 D400 数据手册，August 2025，表 4-2，页 75–76](https://www.realsenseai.com/wp-content/uploads/dlm_uploads/2025/08/Intel-RealSense-D400-Series-Datasheet-August-2025.pdf)
+仅保留当前项目经实机确认、彩色流和深度流均支持的两组配置：
 
 | 常量 | 彩色（RGB8） | 深度（Z16） |
 | --- | --- | --- |
 | `D435_640X480_30` | 640×480@30 | 640×480@30 |
-| `D435_848X480_30` | 848×480@30 | 848×480@30 |
-| `D435_848X480_60` | 848×480@60 | 848×480@60 |
-| `D435_1280X720_30` | 1280×720@30 | 1280×720@30 |
-| `D435_1920X1080_30` | 1920×1080@30 | 1280×720@30 |
+| `D435_1280X720_6` | 1280×720@6 | 1280×720@6 |
 
-这些是 USB 3.x 下选用的组合；SDK 将传感器原生彩色格式转换为 RGB8。
-低分辨率 RGB 60 fps 来自数据手册，不是将产品页 1080p@30 外推到所有分辨率。
-产品页“深度最高 90 fps”不表示 1280×720@90，也不表示彩色可以达到 90 fps。
+SDK 将传感器原生彩色格式转换为 RGB8。
 启动前后都会核对精确流配置，不支持时抛出 `CameraProfileError`。
 
 ## 独立使用
@@ -72,7 +66,7 @@ with camera:
 ## 对齐、坐标与标定
 
 - `AUTO` 和 `SOFTWARE` 都使用 `rs.align(rs.stream.color)`；请求 `HARDWARE` 会报错。
-- 深度输出尺寸始终等于 RGB，1080p Profile 的对齐深度也是 1920×1080。
+- 当前两组 Profile 的彩色与深度流尺寸相同；软件对齐后的深度尺寸等于 RGB。
 - 深度使用帧的 `get_units()` 换算为米。SDK 对齐保留原深度相机的 Z 值；
   适配器使用实际 depth→RGB 外参修正反投影射线的尺度，发布的 `depth_m`
   为彩色光学系 Z，等于点云第三分量。点云按彩色像素排列为 `H×W×3`，
