@@ -96,6 +96,42 @@ class FakeDetector:
         )
 
 
+class FakeMultipleDetector(FakeDetector):
+    def detect(self, observation, target_id):
+        self.detect_calls += 1
+        return FrameDetectionResult(
+            target_id,
+            observation.frame_id,
+            observation.capture_timestamp_ms,
+            4,
+            4,
+            (
+                Detection(
+                    0,
+                    target_id,
+                    0.99,
+                    0,
+                    0,
+                    2,
+                    4,
+                    observation.frame_id,
+                    observation.capture_timestamp_ms,
+                ),
+                Detection(
+                    0,
+                    target_id,
+                    0.60,
+                    2,
+                    0,
+                    4,
+                    4,
+                    observation.frame_id,
+                    observation.capture_timestamp_ms,
+                ),
+            ),
+        )
+
+
 class FakeLocalizer:
     def localize(self, observation, detection):
         return LocalizationResult(
@@ -122,6 +158,20 @@ class FakeNoPointLocalizer:
         )
 
 
+class FakeMultipleLocalizer:
+    def localize(self, observation, detection):
+        point = (0.8, 0.0, 1.0) if detection.x_min == 0 else (0.1, 0.0, 1.0)
+        return LocalizationResult(
+            detection=detection,
+            target_point_camera_m=point,
+            roi=None,
+            roi_point_count=8,
+            valid_point_count=8,
+            depth_median_m=point[2],
+            depth_spread_m=0.0,
+        )
+
+
 class FakeTransform:
     def result2base(self, result, cam_index, rbt_pq):
         return TransformResult(
@@ -130,6 +180,17 @@ class FakeTransform:
             capture_timestamp_ms=result.capture_timestamp_ms,
             status=result.status,
             target_point_base_m=(0.4, 0.5, 0.6),
+        )
+
+
+class FakeIdentityTransform:
+    def result2base(self, result, cam_index, rbt_pq):
+        return TransformResult(
+            target_id=result.target_id,
+            frame_id=result.frame_id,
+            capture_timestamp_ms=result.capture_timestamp_ms,
+            status=result.status,
+            target_point_base_m=result.localization.target_point_camera_m,
         )
 
 
@@ -156,14 +217,14 @@ class Config:
     tracker = TrackerConfig()
 
 
-def initialized_command(detector, localizer=None):
+def initialized_command(detector, localizer=None, transform=None):
     camera = FakeCamera(make_observation(2))
     command = SnapShotCommand(
         FakeRobot(),
         camera,
         detector,
         localizer or FakeLocalizer(),
-        FakeTransform(),
+        transform or FakeTransform(),
         Config.tracker,
     )
     command._last_frame_id = 1
@@ -212,6 +273,91 @@ class SingleShotTargetPointTests(unittest.TestCase):
         target_point = command.capture_once("oolong_tea")
 
         self.assertIsNone(target_point)
+
+    def test_reference_match_prefers_nearest_candidate_over_higher_confidence(self):
+        detector = FakeMultipleDetector()
+        command = initialized_command(
+            detector,
+            FakeMultipleLocalizer(),
+            FakeIdentityTransform(),
+        )
+
+        target_point = command.capture_once(
+            "oolong_tea",
+            reference_point_base_m=(0.11, 0.0, 1.0),
+            maximum_match_distance_m=0.06,
+        )
+
+        self.assertEqual(target_point.target_point_base_m, (0.1, 0.0, 1.0))
+        self.assertEqual(target_point.detection_confidence, 0.60)
+        self.assertEqual(detector.detect_calls, 1)
+
+    def test_capture_without_reference_keeps_highest_confidence_behavior(self):
+        detector = FakeMultipleDetector()
+        command = initialized_command(
+            detector,
+            FakeMultipleLocalizer(),
+            FakeIdentityTransform(),
+        )
+
+        target_point = command.capture_once("oolong_tea")
+
+        self.assertEqual(target_point.target_point_base_m, (0.8, 0.0, 1.0))
+        self.assertEqual(target_point.detection_confidence, 0.99)
+        self.assertEqual(detector.detect_calls, 1)
+
+    def test_reference_match_returns_none_when_nearest_candidate_is_too_far(self):
+        command = initialized_command(
+            FakeMultipleDetector(),
+            FakeMultipleLocalizer(),
+            FakeIdentityTransform(),
+        )
+
+        target_point = command.capture_once(
+            "oolong_tea",
+            reference_point_base_m=(0.0, 0.0, 0.0),
+            maximum_match_distance_m=0.06,
+        )
+
+        self.assertIsNone(target_point)
+
+    def test_reference_match_keeps_error_when_all_candidates_have_no_3d_point(self):
+        command = initialized_command(
+            FakeMultipleDetector(),
+            FakeNoPointLocalizer(),
+            FakeIdentityTransform(),
+        )
+
+        with self.assertRaisesRegex(TargetPointUnavailableError, "没有有效三维点"):
+            command.capture_once(
+                "oolong_tea",
+                reference_point_base_m=(0.1, 0.0, 1.0),
+                maximum_match_distance_m=0.06,
+            )
+
+    def test_reference_match_parameters_must_be_valid_and_provided_together(self):
+        invalid_arguments = (
+            {"reference_point_base_m": (0.1, 0.2, 0.3)},
+            {"maximum_match_distance_m": 0.06},
+            {
+                "reference_point_base_m": (0.1, 0.2),
+                "maximum_match_distance_m": 0.06,
+            },
+            {
+                "reference_point_base_m": (0.1, 0.2, float("nan")),
+                "maximum_match_distance_m": 0.06,
+            },
+            {
+                "reference_point_base_m": (0.1, 0.2, 0.3),
+                "maximum_match_distance_m": 0.0,
+            },
+        )
+
+        for arguments in invalid_arguments:
+            with self.subTest(arguments=arguments):
+                command = initialized_command(FakeDetector())
+                with self.assertRaises(ValueError):
+                    command.capture_once("oolong_tea", **arguments)
 
     def test_capture_keeps_error_when_detected_target_has_no_3d_point(self):
         command = initialized_command(FakeDetector(), FakeNoPointLocalizer())

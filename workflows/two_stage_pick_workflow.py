@@ -6,6 +6,7 @@ reset remain external order tasks.
 
 from __future__ import annotations
 
+import math
 import time
 
 import numpy as np
@@ -21,6 +22,7 @@ from workflows.pick_result import PickWorkflowResult, PickWorkflowStatus
 SECOND_PHOTO_OFFSET_TOOL_MM = np.asarray((0.0, 20.0, -400.0))
 PREGRASP_OFFSET_TOOL_MM = np.asarray((0.0, 35.0, -285.0))
 FINAL_APPROACH_OFFSET_TOOL_MM = np.asarray((0.0, 0.0, 120.0))
+DEFAULT_INSTANCE_MATCH_DISTANCE_M = 0.06
 
 
 class TwoStagePickWorkflow:
@@ -30,11 +32,26 @@ class TwoStagePickWorkflow:
         robot_executor: RobotCommandExecutor,
         hand_executor: HandCommandExecutor,
         snapshot_command: SnapShotCommand,
+        *,
+        instance_match_distance_m: float = DEFAULT_INSTANCE_MATCH_DISTANCE_M,
     ) -> None:
+        if isinstance(instance_match_distance_m, bool):
+            raise ValueError("instance_match_distance_m 必须是有限正数")
+        try:
+            normalized_match_distance_m = float(instance_match_distance_m)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ValueError("instance_match_distance_m 必须是有限正数") from error
+        if (
+            not math.isfinite(normalized_match_distance_m)
+            or normalized_match_distance_m <= 0.0
+        ):
+            raise ValueError("instance_match_distance_m 必须是有限正数")
+
         self.robot = robot
         self.robot_executor = robot_executor
         self.hand_executor = hand_executor
         self.snapshot_command = snapshot_command
+        self.instance_match_distance_m = normalized_match_distance_m
 
     def execute(self, model_id: int, target_id: str) -> PickWorkflowResult:
         """Execute two-stage perception and grasping."""
@@ -87,9 +104,13 @@ class TwoStagePickWorkflow:
         )
 
         time.sleep(0.5)
-        target_second = self.snapshot_command.capture_once(target_id)
+        target_second = self.snapshot_command.capture_once(
+            target_id,
+            reference_point_base_m=target.target_point_base_m,
+            maximum_match_distance_m=self.instance_match_distance_m,
+        )
         if target_second is None:
-            message = f"第二次拍照未检测到目标 {target_id}，等待人工处理"
+            message = "第二次拍照未找到与第一次拍照一致的目标，等待人工处理"
             print(f"[抓取] {message}。")
             return PickWorkflowResult(
                 PickWorkflowStatus.SECOND_DETECTION_FAILED,

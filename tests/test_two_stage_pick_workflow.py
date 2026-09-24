@@ -69,8 +69,10 @@ class FakeSnapshotCommand:
 
     def __init__(self, captures) -> None:
         self._captures = deque(captures)
+        self.calls = []
 
-    def capture_once(self, _target_id):
+    def capture_once(self, target_id, **kwargs):
+        self.calls.append((target_id, kwargs))
         return self._captures.popleft()
 
 
@@ -109,7 +111,26 @@ def test_second_detection_miss_pauses(monkeypatch):
     result = workflow.execute(0, "mineral_water")
 
     assert result.status is PickWorkflowStatus.SECOND_DETECTION_FAILED
+    assert result.message == "第二次拍照未找到与第一次拍照一致的目标，等待人工处理"
     assert ("grasp", 15) not in hand.calls
+
+
+def test_second_capture_matches_against_first_base_point(monkeypatch):
+    monkeypatch.setattr("workflows.two_stage_pick_workflow.time.sleep", lambda _s: None)
+    first = target(0.11, 0.22, 0.33)
+    workflow, _, _, _ = build_workflow(captures=[first, target()])
+
+    workflow.execute(0, "mineral_water")
+
+    calls = workflow.snapshot_command.calls
+    assert calls[0] == ("mineral_water", {})
+    assert calls[1] == (
+        "mineral_water",
+        {
+            "reference_point_base_m": first.target_point_base_m,
+            "maximum_match_distance_m": workflow.instance_match_distance_m,
+        },
+    )
 
 
 @pytest.mark.parametrize(

@@ -16,6 +16,7 @@ from taskrunner.monitor import ControllerMonitor
 from taskrunner.orders import HardwareBeverageOrderActions, TestRecognitionOrders
 from taskrunner.runner import TaskRunner
 
+DEFAULT_INSTANCE_MATCH_DISTANCE_M = 0.2
 
 def _close_resources(resources: Iterable[object | None]) -> None:
     """按调用方给出的反向依赖顺序尽力关闭资源。"""
@@ -159,6 +160,7 @@ def create_hardware_runtime(
             robot_executor=robot_executor,
             hand_executor=hand_executor,
             snapshot_command=snapshot_command,
+            instance_match_distance_m=DEFAULT_INSTANCE_MATCH_DISTANCE_M,
         )
         actions = HardwareBeverageOrderActions(
             pick_workflow=pick_workflow,

@@ -175,12 +175,22 @@ class SnapShotCommand:
             self.close()
             raise
 
-    def capture_once(self, target_id: str) -> TargetPoint | None:
+    def capture_once(
+        self,
+        target_id: str,
+        *,
+        reference_point_base_m: tuple[float, float, float] | None = None,
+        maximum_match_distance_m: float | None = None,
+    ) -> TargetPoint | None:
         """等待一个新帧，执行一次 YOLO 推理并返回目标点。
 
         本方法不会控制机器人运动。机器人必须在拍照时保持静止，否则眼在手上
         相机的帧和 TCP 位姿不能形成可靠的坐标变换。YOLO 未选中指定目标时
         返回 ``None``；已经检测到目标但无法取得有效三维点时仍抛出异常。
+
+        同时提供 ``reference_point_base_m`` 和 ``maximum_match_distance_m`` 时，
+        会定位当前帧内全部同类候选，并选择基坐标最接近参考点且位于距离门限
+        内的候选。该模式用于相机移动后的离散拍照，不依赖二维框跨视角关联。
         """
         self._require_initialized()
         if not isinstance(target_id, str) or not target_id.strip():
@@ -191,20 +201,28 @@ class SnapShotCommand:
             raise ValueError(
                 f"检测模型不支持目标 {target_id!r}；可用目标: {available}"
             )
+        reference_point_base_m, maximum_match_distance_m = (
+            self._normalize_instance_match(
+                reference_point_base_m,
+                maximum_match_distance_m,
+            )
+        )
         observation = self._wait_for_fresh_observation()
         robot_tcp_pq = self._read_stable_robot_tcp_pq()
 
-        from perception.session import TargetPerceptionSession
-        from perception.target_tracker import SingleTargetTracker
-
-        session = TargetPerceptionSession(
-            detector=self._detector,
-            localizer=self._localizer,
-            tracker=SingleTargetTracker(self._tracker_config),
-            target_id=target_id,
-        )
-        # TargetPerceptionSession.process 内只调用一次 detector.detect。
-        result = session.process(observation)
+        transform_result = None
+        if reference_point_base_m is None:
+            result = self._process_default_target(observation, target_id)
+        else:
+            # 参数在 _normalize_instance_match 中成对校验，此处两者必定同时存在。
+            assert maximum_match_distance_m is not None
+            result, transform_result = self._process_reference_match(
+                observation,
+                target_id,
+                robot_tcp_pq,
+                reference_point_base_m,
+                maximum_match_distance_m,
+            )
         localization = result.localization
         if result.detection is None:
             self._publish_debug_result(
@@ -225,11 +243,12 @@ class SnapShotCommand:
                 f"目标 {target_id!r} 没有有效三维点，状态={result.status.value}"
             )
 
-        transform_result = self._camera_transform.result2base(
-            result=result,
-            cam_index=self._camera_extrinsic_index,
-            rbt_pq=robot_tcp_pq,
-        )
+        if transform_result is None:
+            transform_result = self._camera_transform.result2base(
+                result=result,
+                cam_index=self._camera_extrinsic_index,
+                rbt_pq=robot_tcp_pq,
+            )
         if transform_result.target_point_base_m is None:
             raise TargetPointUnavailableError(
                 f"目标 {target_id!r} 无法转换到机器人基坐标系"
@@ -252,6 +271,150 @@ class SnapShotCommand:
             robot_tcp_pq,
         )
         return target_point
+
+    def _process_default_target(self, observation: Any, target_id: str) -> Any:
+        """保持原有的单帧最高置信度选择行为。"""
+        from perception.session import TargetPerceptionSession
+        from perception.target_tracker import SingleTargetTracker
+
+        session = TargetPerceptionSession(
+            detector=self._detector,
+            localizer=self._localizer,
+            tracker=SingleTargetTracker(self._tracker_config),
+            target_id=target_id,
+        )
+        # TargetPerceptionSession.process 内只调用一次 detector.detect。
+        return session.process(observation)
+
+    def _process_reference_match(
+        self,
+        observation: Any,
+        target_id: str,
+        robot_tcp_pq: list[float],
+        reference_point_base_m: tuple[float, float, float],
+        maximum_match_distance_m: float,
+    ) -> tuple[Any, Any | None]:
+        """以基坐标参考点在一帧的全部同类候选中关联同一物体。"""
+        from perception.percept_structs import TargetPerceptionResult, TargetStatus
+
+        detection_result = self._detector.detect(observation, target_id)
+        if not detection_result.detections:
+            return self._no_match_result(observation, target_id), None
+
+        reference = np.asarray(reference_point_base_m, dtype=float)
+        localized_candidates: list[tuple[float, Any, Any]] = []
+        unlocalized_results: list[Any] = []
+
+        for detection in detection_result.detections:
+            localization = self._localizer.localize(observation, detection)
+            status = (
+                TargetStatus.TARGET_TRACKED
+                if localization.has_target_point
+                else TargetStatus.NO_TARGET_POINT
+            )
+            result = TargetPerceptionResult(
+                target_id=target_id,
+                frame_id=observation.frame_id,
+                capture_timestamp_ms=observation.capture_timestamp_ms,
+                status=status,
+                detection=detection,
+                localization=localization,
+                consecutive_missing_frames=0,
+            )
+            if not localization.has_target_point:
+                unlocalized_results.append(result)
+                continue
+
+            transform_result = self._camera_transform.result2base(
+                result=result,
+                cam_index=self._camera_extrinsic_index,
+                rbt_pq=robot_tcp_pq,
+            )
+            if transform_result.target_point_base_m is None:
+                raise TargetPointUnavailableError(
+                    f"目标 {target_id!r} 无法转换到机器人基坐标系"
+                )
+            candidate_point = np.asarray(
+                transform_result.target_point_base_m,
+                dtype=float,
+            )
+            distance_m = float(np.linalg.norm(candidate_point - reference))
+            localized_candidates.append((distance_m, result, transform_result))
+
+        if not localized_candidates:
+            # 保持原有语义：检测到目标但没有有效三维点时，由 capture_once 抛出异常。
+            result = max(
+                unlocalized_results,
+                key=lambda item: item.detection.confidence,
+            )
+            return result, None
+
+        distance_m, result, transform_result = min(
+            localized_candidates,
+            key=lambda item: (item[0], -float(item[1].detection.confidence)),
+        )
+        if distance_m > maximum_match_distance_m:
+            print(
+                f"[相机] 最近同类候选距第一次目标 {distance_m:.3f} m，"
+                f"超过同实例门限 {maximum_match_distance_m:.3f} m。"
+            )
+            return self._no_match_result(observation, target_id), None
+
+        print(
+            f"[相机] 已关联第一次拍照目标，基坐标距离 {distance_m:.3f} m。"
+        )
+        return result, transform_result
+
+    @staticmethod
+    def _no_match_result(observation: Any, target_id: str) -> Any:
+        from perception.percept_structs import TargetPerceptionResult, TargetStatus
+
+        return TargetPerceptionResult(
+            target_id=target_id,
+            frame_id=observation.frame_id,
+            capture_timestamp_ms=observation.capture_timestamp_ms,
+            status=TargetStatus.NO_MATCH,
+            detection=None,
+            localization=None,
+            consecutive_missing_frames=0,
+        )
+
+    @staticmethod
+    def _normalize_instance_match(
+        reference_point_base_m: tuple[float, float, float] | None,
+        maximum_match_distance_m: float | None,
+    ) -> tuple[tuple[float, float, float] | None, float | None]:
+        if reference_point_base_m is None:
+            if maximum_match_distance_m is not None:
+                raise ValueError(
+                    "maximum_match_distance_m 只能与 reference_point_base_m 同时提供"
+                )
+            return None, None
+        if maximum_match_distance_m is None:
+            raise ValueError(
+                "提供 reference_point_base_m 时必须同时提供 maximum_match_distance_m"
+            )
+
+        try:
+            reference = np.asarray(reference_point_base_m, dtype=float)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ValueError("reference_point_base_m 必须是三个有限数值") from error
+        if reference.shape != (3,) or not np.isfinite(reference).all():
+            raise ValueError("reference_point_base_m 必须是三个有限数值")
+
+        if isinstance(maximum_match_distance_m, bool):
+            raise ValueError("maximum_match_distance_m 必须是有限正数")
+        try:
+            maximum_distance = float(maximum_match_distance_m)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ValueError("maximum_match_distance_m 必须是有限正数") from error
+        if not math.isfinite(maximum_distance) or maximum_distance <= 0.0:
+            raise ValueError("maximum_match_distance_m 必须是有限正数")
+
+        return (
+            tuple(float(value) for value in reference),
+            maximum_distance,
+        )
 
     def close(self) -> None:
         """结束当前使用状态；不会关闭或销毁任何外部依赖。"""
