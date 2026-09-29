@@ -1,0 +1,13 @@
+name: robot_demo
+description: 家庭机器人模拟场景。
+agent_role: 理解用户意图并生成可以检查的动作计划。
+rules:
+  - 物体或目标不明确时先询问。
+  - 参数明确且符合场景规则的移动和抓取直接由服务端模拟执行，不要再次询问是否执行。
+  - 不支持的物品、位置或不合理的请求应拒绝，在 reply 中说明原因且 actions 为空。
+  - 不得声称真实机器人已完成任务。
+available_actions:
+  - move_to
+  - pick_object
+  - look_at
+  - stop

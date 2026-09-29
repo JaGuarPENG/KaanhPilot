@@ -105,7 +105,8 @@ def open_when_ready(port, done):
 def main():
     config = load_config()
     configured_python = config.get('python_executable','').strip()
-    if configured_python:
+    # The batch entry already applied .venv -> configured Python -> Conda priority.
+    if configured_python and os.environ.get('KAANH_BACKEND_PYTHON_SELECTED') != '1':
         executable = local_path(configured_python)
         if not executable.is_file():
             raise ValueError('python_executable 指向的 Python 不存在，请检查 launcher_config.json')
@@ -117,6 +118,11 @@ def main():
     dry_run = config.get('dry_run', True)
     if not isinstance(dry_run, bool):
         raise ValueError('dry_run must be true or false')
+    software_only = config.get('software_only', False)
+    if not isinstance(software_only, bool):
+        raise ValueError('software_only must be true or false')
+    if software_only and not dry_run:
+        raise ValueError('software_only requires dry_run=true')
     host, port = config.get('host', '127.0.0.1'), config.get('port', 8088)
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
         raise ValueError('port must be an integer from 1 to 65535')
@@ -126,7 +132,9 @@ def main():
         check_port(host, port)
         from frontend.server import serve
         print_access_addresses(host, port)
-        print('Mode: ' + ('simulation' if dry_run else 'real hardware'), flush=True)
+        mode = 'software only (no hardware)' if software_only else (
+            'simulation' if dry_run else 'real hardware')
+        print('Mode: ' + mode, flush=True)
         if config.get('open_browser', True):
             threading.Thread(target=open_when_ready, args=(port, done), daemon=True).start()
         serve(config, PROJECT_ROOT / 'config')
