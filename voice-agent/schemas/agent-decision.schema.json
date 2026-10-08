@@ -1,0 +1,70 @@
+{
+  "$defs": {
+    "Action": {
+      "additionalProperties": false,
+      "properties": {
+        "action_id": {
+          "maxLength": 64,
+          "title": "Action Id",
+          "type": "string"
+        },
+        "type": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Type",
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "Action",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "reply": {
+      "maxLength": 4000,
+      "minLength": 1,
+      "title": "Reply",
+      "type": "string"
+    },
+    "intent": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Intent",
+      "type": "string"
+    },
+    "actions": {
+      "items": {
+        "$ref": "#/$defs/Action"
+      },
+      "maxItems": 8,
+      "title": "Actions",
+      "type": "array"
+    },
+    "status": {
+      "enum": [
+        "ready",
+        "waiting_for_user",
+        "rejected"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "reply",
+    "intent",
+    "actions",
+    "status"
+  ],
+  "title": "AgentDecision",
+  "type": "object"
+}

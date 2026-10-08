@@ -5,6 +5,7 @@ import time
 
 from taskrunner.errors import FatalExecutionError
 from taskrunner.orders import BEVERAGE_TARGET_IDS
+from taskrunner.runner import TaskRunner
 from taskrunner.taskrunner_contracts import RobotTaskType, TaskExecutionResult
 
 
@@ -39,3 +40,16 @@ class SimulatedActions:
 
     def cancel_paused_pick(self):
         time.sleep(self.delay)
+
+
+class SoftwareRuntime:
+    """纯软件组合根；Runner 的启动和关闭由 HTTP 服务统一管理。"""
+
+    camera = None
+
+    def __init__(self, *, queue_capacity=10, stage_delay=1.0, on_fatal=None):
+        self.runner = TaskRunner(SimulatedActions(delay=stage_delay),
+                                 queue_capacity=queue_capacity, on_fatal=on_fatal)
+
+    def close(self):
+        """没有相机、控制器或其他需要释放的硬件资源。"""

@@ -23,6 +23,16 @@ node --test frontend/tests/test_ipad_ui.cjs frontend/tests/test_progress_follow.
 
 ## 启动与接口
 
+Windows 可双击根目录 `Start-Backend.bat`。后端按以下顺序选择可运行的 Python 3.10+：
+根目录 `.venv\Scripts\python.exe` → `launcher_config.json` 的 `python_executable`
+→ Conda `pyagent`。配置中的相对路径以 `config/launcher` 为基准。
+全部不可用时停止并报错；应用启动后的错误不会换环境重试。依赖需安装到选中的环境。
+后端批处理选定解释器后，`launcher.py` 不再二次切换；直接运行 `python launcher.py`
+仍保留配置解释器覆盖行为。语音脚本保持 `.venv` → Conda `pyagent` 的顺序。
+Conda 默认从 `CONDA_EXE` 定位，或使用本机 `D:\anaconda3\condabin\conda.bat`；
+其他安装位置可通过环境变量 `KAANH_CONDA_BAT` 指定。执行
+`Start-Backend.bat --check-env` 可仅检查解释器，不启动后端。
+
 唯一 Python 启动入口为根目录 `python launcher.py`。`frontend/Start-Frontend.bat`
 也转到这个入口。读取 `config/launcher/launcher_config.json`，不再使用前端独立配置。
 
@@ -31,11 +41,13 @@ node --test frontend/tests/test_ipad_ui.cjs frontend/tests/test_progress_follow.
 若监听 `127.0.0.1` 则只提示本机访问，不会打印无法访问的局域网链接。
 地址检测失败不阻止服务启动；网页需等待设备初始化完成后才能访问。
 
-- `dry_run: true`：通过 `create_recognition_test_runtime()` 连接模拟机器人服务器，并初始化左手相机和识别资源，不连接 AGV 和灵巧手。
+- `software_only: true`：纯软件联调，必须同时设置 `dry_run: true`。不连接相机、机器人、灵巧手或 AGV，也不加载视觉识别资源；复用真实 TaskRunner 队列，四阶段由 `SimulatedActions` 模拟完成。语音助手和商品卡片均可正常下单，页面显示模拟进度，相机显示占位画面。
+- `software_only: false` 或省略：保持原有启动流程，按 `dry_run` 选择以下两种模式，不会在硬件连接失败后自动降级。
+- `dry_run: true`：通过 `create_recognition_test_runtime()` 连接模拟机器人服务器，并初始化左手相机和识别资源，不连接 AGV 和灵巧手（仅在未开启 `software_only` 时）。
 - `dry_run: false`：通过现有 `create_hardware_runtime()` 连接机器人、头部和左手相机、灵巧手和 AGV；右手相机尚未接入。
   右手相机接入并由运行时加入 `cameras` 后，页面会自动改为实时画面，不需改页面配置。
 - `simulation_robot_ip`：可选的模拟控制器 IP，未设置时沿用 runtime 默认值 `192.168.110.77`。
-- `stage_delay`：可选的测试阶段等待秒数，未设置时沿用 runtime 默认值 3；`queue_capacity` 默认 10。
+- `stage_delay`：可选的测试阶段等待秒数，模拟控制器模式默认 3 秒，纯软件模式默认每阶段 1 秒；`queue_capacity` 默认 10。
 - `host`、`port`、`python_executable` 和 AGV 配置继续由根启动入口读取。页面无需口令，旧配置中的 `api_token` 不再使用。
 
 页面 → `frontend/server.py` → Runner 公共方法。HTTP 层不保存订单、不实现第二套调度。
@@ -70,11 +82,11 @@ node --test frontend/tests/test_ipad_ui.cjs frontend/tests/test_progress_follow.
 - 售罄提示来自本页观察到的 `failed / out_of_stock` 结果，并作用于映射到同一物品的卡片。
   页面加载前已结束的订单不会被枚举，因此这不是跨页面共享库存数据库。
 - “设为待检测”仅清除本页售罄提示；下一单由 Runner 重新检测。
-- 原纯软件 `frontend/simulation.py` 仅供自动化测试，不再用于项目启动；模拟控制器模式隐藏演示库存设置面板。
+- `frontend/simulation.py` 用于自动化测试和显式开启的纯软件联调模式；正常启动不开放演示库存注入接口。
 - dry_run 和真实模式使用相同队列及状态机；直接调用 `runtime.py` 的工厂，`test_ui.py` 不参与启动。
 - 当前 `create_recognition_test_runtime()` 中识别 Workflow 的构造与调用被注释，取物阶段直接返回模拟成功。此次保持该逻辑不变，因此它目前不能验证真实识别缺货；运输、放置、复位会按现有实现向模拟控制器发动作指令。
 
-要使用模拟控制器，将统一启动配置中的 `dry_run` 设为 `true`。可选增加
+要使用模拟控制器，关闭 `software_only`，将统一启动配置中的 `dry_run` 设为 `true`。可选增加
 `"simulation_robot_ip": "192.168.110.77"`。它使用现有机器人配置中的控制/监控端口及登录配置，
 也需要左手相机和识别依赖可用；连接失败会报错，不会退回纯演示或切换真实机器人。
 

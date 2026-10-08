@@ -154,7 +154,16 @@ def handler_for(runner, *, dry_run=False, simulation=None, cameras=None, runtime
 
 
 def create_runtime(config, config_dir, on_fatal):
-    """dry_run 连接模拟控制器；真实模式沿用原硬件运行时。"""
+    """显式选择纯软件、模拟控制器或真实硬件运行时。"""
+    software_only = config.get('software_only', False)
+    if not isinstance(software_only, bool):
+        raise ValueError('software_only must be true or false')
+    if software_only:
+        if config.get('dry_run', True) is not True:
+            raise ValueError('software_only requires dry_run=true')
+        from frontend.simulation import SoftwareRuntime
+        return SoftwareRuntime(queue_capacity=config.get('queue_capacity', 10),
+                               stage_delay=config.get('stage_delay', 1.0), on_fatal=on_fatal)
     if config.get('dry_run', True):
         from taskrunner.runtime import create_recognition_test_runtime
         options = {}
