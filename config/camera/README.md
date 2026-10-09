@@ -1,23 +1,34 @@
 # 多相机配置
 
-`cameras.json` 声明逻辑名称、适配器类型、SDK 设备索引、参数文件与机器人外参编号：
+`cameras.json` 声明逻辑名称、适配器类型、设备序列号、SDK 设备索引、参数文件与机器人外参编号：
 
-| 名称 | 类型 | 参数文件 | 外参编号 |
-| --- | --- | --- | --- |
-| `head` | `realsense_d435` | `d435.json` | 0：eye_to_hand_cam0 |
-| `left` | `orbbec_g305` | `g305.json` | 1：eye_in_hand_cam1 |
+| 名称 | 类型 | 序列号 | 参数文件 | 外参编号 |
+| --- | --- | --- | --- | --- |
+| `head` | `realsense_d435` | `050122074988` | `d435.json` | 0：eye_to_hand_cam0 |
+| `left` | `orbbec_g305` | `CV2T661000PF` | `g305_left.json` | 1：eye_in_hand_cam1 |
+| `right` | `orbbec_g305` | `CV2T661000WB` | `g305_right.json` | 2：eye_in_hand_cam2 |
 
-这是当前配置的映射；请按实际安装位置修改名称和外参编号，JSON 不会自动完成标定。
-`device_index` 在各 SDK 的设备列表中选择设备，与 `extrinsic_index` 无关。
-编号 2 对应 `eye_in_hand_cam2`。应用不应再用适配器的私有 `_device_index` 选择外参。
+这是当前配置的映射；设备安装位置变化时请核对序列号和外参编号，JSON 不会自动完成标定。
+配置 `serial_number` 后，启动时必须找到对应设备；找不到会报错，不会改用
+`device_index`。未配置序列号时，`device_index` 才在各 SDK 的设备列表中选择设备。
+`device_index` 与 `extrinsic_index` 无关；应用不应使用适配器的私有索引选择外参。
 
-`settings_file` 相对于本目录，可以省略：G305 默认使用 `g305.json`，D435 默认
+`settings_file` 相对于本目录。当前两台 G305 分别指定独立参数文件；D435 默认
 使用 `d435.json`。多台同型号相机可使用不同名称和不同参数文件；同一物理设备
 应创建一个实例，由其所有消费者共享，避免重复启动独占 Pipeline。
 
 参数文件分别配置 `profile`、`alignment`、`warmup_seconds`、滤波开关/参数和
 深度阈值。省略或同时设为 null 的 `minimum_depth_m` / `maximum_depth_m`
 表示关闭深度阈值过滤；不能只给一个边界。
+
+G305 必须配置布尔型 `auto_exposure`。该型号的彩色、IR 和深度自动曝光开关联动。
+为 `true` 时，`exposure` 和 `gain` 即使保留在 JSON 中，也不会校验或写入设备；
+为 `false` 时，两者都必须为整数，并在关闭自动曝光后写入。启动时按设备实际写入权限、
+范围和步长校验。右臂当前使用手动曝光 150、增益 16；左臂启用自动曝光，保留手动值
+156 和 16 供以后切换。`color_sharpness` 可设为 0 到 100 的整数，或设为 `null`
+以保留设备当前值。修改配置后重启服务生效。
+
+自动曝光下双流彩色画面可能过曝；本配置不会改变设备当前的自动曝光参考源。
 
 | 类型 | 可用 Profile 名称 |
 | --- | --- |

@@ -1,5 +1,5 @@
 ﻿{
-    "profile": "848@30",
+    "profile": "1280@30",
     "warmup_seconds": 1.0,
     "temporal_enabled": true,
     "spatial_enabled": true,
@@ -8,5 +8,9 @@
     "maximum_depth_m": 2.0,
     "spatial_magnitude": 1,
     "spatial_alpha": 0.5,
-    "hole_filling_mode": 1
+    "hole_filling_mode": 1,
+    "auto_exposure": false,
+    "exposure": 156,
+    "gain": 16,
+    "color_sharpness": 100
 }

@@ -83,6 +83,6 @@ class GetCameraIntriCommand:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="获取指定相机的内参")
-    parser.add_argument("--camera", default="head", help="cameras.json 中的相机名称，如 head、wrist")
+    parser.add_argument("--camera", default="right", help="cameras.json 中的相机名称，如 head、wrist")
     command = GetCameraIntriCommand(parser.parse_args().camera)
     command.get_camera_intri()

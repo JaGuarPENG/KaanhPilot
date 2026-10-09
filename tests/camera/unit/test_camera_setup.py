@@ -22,7 +22,9 @@ class CameraSetupTests(unittest.TestCase):
             "wrist": {"type": "realsense_d435", "device_index": 1, "settings_file": "d435.json", "extrinsic_index": 2},
         }
         self.g305 = {"profile": "1280@30", "alignment": "auto", "warmup_seconds": 1.0,
-                     "minimum_depth_m": 0.02, "maximum_depth_m": 2.0, "spatial_enabled": True}
+                     "minimum_depth_m": 0.02, "maximum_depth_m": 2.0, "spatial_enabled": True,
+                     "auto_exposure": True, "exposure": 156, "gain": 16,
+                     "color_sharpness": None}
         self.d435 = {"profile": "1280@6", "alignment": "software", "warmup_seconds": 2.0,
                      "minimum_depth_m": 0.15, "maximum_depth_m": 3.0, "temporal_enabled": True,
                      "hole_filling_enabled": True, "hole_filling_mode": 1}
@@ -71,6 +73,56 @@ class CameraSetupTests(unittest.TestCase):
         self.assertEqual(wrist._device_index, 1)
         self.assertIsNot(head.depth_processing, wrist.depth_processing)
 
+    def test_serial_numbers_reach_both_camera_adapters(self):
+        self.registry["head"]["serial_number"] = " g305-head "
+        self.registry["wrist"]["serial_number"] = "d435-wrist"
+        setup = RobotSetup(ROOT / "config")
+        head = setup.setup_camera("head")
+        wrist = setup.setup_camera("wrist")
+        self.assertEqual(setup.get_camera_settings("head").serial_number, "g305-head")
+        self.assertEqual(head._serial_number, "g305-head")
+        self.assertEqual(wrist._serial_number, "d435-wrist")
+
+    def test_exposure_settings_reach_g305_without_changing_d435_constructor(self):
+        self.g305.update(auto_exposure=False, exposure=150, gain=16, color_sharpness=65)
+        setup = RobotSetup(ROOT / "config")
+        g305 = setup.setup_camera("head")
+        d435 = setup.setup_camera("wrist")
+        self.assertEqual((g305._auto_exposure, g305._exposure, g305._gain, g305._color_sharpness),
+                         (False, 150, 16, 65))
+        self.assertIsInstance(d435, RealSenseD435Camera)
+
+    def test_auto_mode_ignores_manual_values(self):
+        self.g305.update(exposure="ignored", gain=True)
+        setup = RobotSetup(ROOT / "config")
+        g305 = setup.setup_camera("head")
+        self.assertTrue(g305._auto_exposure)
+        self.assertIsNone(g305._exposure)
+        self.assertIsNone(g305._gain)
+
+    def test_invalid_g305_settings_fail_during_configuration(self):
+        for field, value in (
+            ("auto_exposure", None), ("auto_exposure", 1),
+            ("color_sharpness", 2.5), ("color_sharpness", -1), ("color_sharpness", 101),
+        ):
+            with self.subTest(field=field, value=value):
+                original = self.g305[field]
+                self.g305[field] = value
+                with self.assertRaisesRegex(ValueError, field):
+                    RobotSetup(ROOT / "config")
+                self.g305[field] = original
+        self.g305["auto_exposure"] = False
+        for field, value in (("exposure", None), ("exposure", True), ("gain", None), ("gain", "16")):
+            with self.subTest(field=field, value=value):
+                original = self.g305[field]
+                self.g305[field] = value
+                with self.assertRaisesRegex(ValueError, field):
+                    RobotSetup(ROOT / "config")
+                self.g305[field] = original
+        self.d435["auto_exposure"] = True
+        with self.assertRaisesRegex(ValueError, "orbbec_g305"):
+            RobotSetup(ROOT / "config")
+
     def test_unknown_camera_name_has_clear_error(self):
         setup = RobotSetup(ROOT / "config")
         with self.assertRaisesRegex(ValueError, "missing"):
@@ -116,6 +168,13 @@ class CameraSetupTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             RobotSetup(ROOT / "config")
 
+    def test_invalid_serial_number_fails_during_configuration(self):
+        for value in ("", "  ", 123):
+            with self.subTest(value=value):
+                self.registry["wrist"]["serial_number"] = value
+                with self.assertRaisesRegex(ValueError, "serial_number"):
+                    RobotSetup(ROOT / "config")
+
     def test_d435_rejects_incompatible_filter_and_alignment_settings(self):
         self.d435["hole_filling_mode"] = 0
         with self.assertRaises(ValueError):
@@ -146,16 +205,24 @@ class ShippedCameraConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "extrinsic_index"):
                 YoloFollowerCommand("test_target", camera_name="left")
 
-    def test_real_config_files_create_both_stopped_adapters(self):
+    def test_real_config_files_create_all_stopped_adapters(self):
         setup = RobotSetup(ROOT / "config")
+        self.assertEqual(
+            {name: setup.get_camera_settings(name).serial_number for name in ("head", "left", "right")},
+            {"head": "050122074988", "left": "CV2T661000PF", "right": "CV2T661000WB"},
+        )
         self.assertEqual(setup.get_camera_settings("head").profile.depth_format, "Z16")
         self.assertEqual(setup.get_camera_settings("head").profile.depth_width, 640)
         self.assertEqual(setup.get_camera_settings("head").depth_processing.hole_filling_mode, 1)
-        for name, adapter in (("head", RealSenseD435Camera), ("left", OrbbecG305Camera)):
+        self.assertTrue(setup.get_camera_settings("left").auto_exposure)
+        self.assertFalse(setup.get_camera_settings("right").auto_exposure)
+        self.assertEqual((setup.get_camera_settings("right").exposure, setup.get_camera_settings("right").gain), (150, 16))
+        for name, adapter in (("head", RealSenseD435Camera), ("left", OrbbecG305Camera), ("right", OrbbecG305Camera)):
             with self.subTest(camera=name):
                 camera = setup.setup_camera(name)
                 self.addCleanup(camera.close)
                 self.assertIsInstance(camera, adapter)
                 self.assertEqual(camera.state, CameraState.STOPPED)
+                self.assertEqual(camera._serial_number, setup.get_camera_settings(name).serial_number)
 if __name__ == "__main__":
     unittest.main()

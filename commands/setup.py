@@ -90,7 +90,7 @@ class ViewerSettings:
 
 @dataclass(frozen=True, slots=True)
 class CameraSettings:
-    """一台逻辑相机的独立配置；设备索引与机器人外参编号互不关联。"""
+    """一台逻辑相机的独立配置；序列号优先于设备索引。"""
 
     camera_type: str
     device_index: int
@@ -99,6 +99,11 @@ class CameraSettings:
     depth_processing: DepthProcessingConfig
     warmup_seconds: float
     extrinsic_index: int
+    serial_number: str | None = None
+    auto_exposure: bool | None = None
+    exposure: int | None = None
+    gain: int | None = None
+    color_sharpness: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,12 +152,19 @@ class RobotSetup:
         """创建未启动的独立适配器；同一物理相机应只创建一次并共享实例。"""
         settings = self.get_camera_settings(camera_name)
         adapter = CAMERA_ADAPTERS[settings.camera_type]
-        return adapter(
-            profile=settings.profile,
-            alignment_mode=settings.alignment,
-            device_index=settings.device_index,
-            depth_processing=settings.depth_processing,
-        )
+        kwargs = {
+            "profile": settings.profile,
+            "alignment_mode": settings.alignment,
+            "device_index": settings.device_index,
+            "depth_processing": settings.depth_processing,
+            "serial_number": settings.serial_number,
+        }
+        if settings.camera_type == "orbbec_g305":
+            kwargs["auto_exposure"] = settings.auto_exposure
+            kwargs["exposure"] = settings.exposure
+            kwargs["gain"] = settings.gain
+            kwargs["color_sharpness"] = settings.color_sharpness
+        return adapter(**kwargs)
     
     def setup_localizer(self) -> RoiPointCloudLocalizer:
         """根据配置创建并返回 RoiPointCloudLocalizer 实例。"""
@@ -301,10 +313,34 @@ class RobotSetup:
             profiles = CAMERA_PROFILES[camera_type]
             if not isinstance(profile_name, str) or profile_name not in profiles:
                 raise ValueError(f"相机 {name!r} 不支持 {camera_type} profile: {profile_name!r}；可选: {', '.join(profiles)}")
+            auto_exposure = data.get("auto_exposure")
+            exposure = data.get("exposure")
+            gain = data.get("gain")
+            color_sharpness = data.get("color_sharpness")
+            if camera_type == "orbbec_g305":
+                if type(auto_exposure) is not bool:
+                    raise ValueError(f"相机 {name!r} 的 auto_exposure 必须是 JSON 布尔值")
+                if not auto_exposure:
+                    for field_name, value in (("exposure", exposure), ("gain", gain)):
+                        if type(value) is not int:
+                            raise ValueError(f"相机 {name!r} 关闭自动曝光时，{field_name} 必须是整数")
+                else:
+                    # 自动模式完全忽略手动值；保留在 JSON 中方便之后切换模式。
+                    exposure = None
+                    gain = None
+                if color_sharpness is not None and (type(color_sharpness) is not int or not 0 <= color_sharpness <= 100):
+                    raise ValueError(f"相机 {name!r} 的 color_sharpness 必须是 0 到 100 的整数或 null")
+            elif any(key in data for key in ("auto_exposure", "exposure", "gain", "color_sharpness")):
+                raise ValueError(f"相机 {name!r}: 曝光和锐度配置仅支持 orbbec_g305")
             device_index = entry.get("device_index", 0)
+            serial_number = entry.get("serial_number")
             extrinsic_index = entry.get("extrinsic_index")
             if type(device_index) is not int or device_index < 0:
                 raise ValueError(f"相机 {name!r} 的 device_index 必须为非负整数")
+            if serial_number is not None:
+                if not isinstance(serial_number, str) or not serial_number.strip():
+                    raise ValueError(f"相机 {name!r} 的 serial_number 必须为非空字符串")
+                serial_number = serial_number.strip()
             if type(extrinsic_index) is not int or extrinsic_index not in (0, 1, 2):
                 raise ValueError(f"相机 {name!r} 的 extrinsic_index 必须为 0、1 或 2")
             warmup = float(data.get("warmup_seconds", 1.0))
@@ -339,7 +375,9 @@ class RobotSetup:
             cameras[name] = CameraSettings(
                 camera_type=camera_type, device_index=device_index, profile=profile,
                 alignment=alignment, depth_processing=processing, warmup_seconds=warmup,
-                extrinsic_index=extrinsic_index,
+                extrinsic_index=extrinsic_index, serial_number=serial_number,
+                auto_exposure=auto_exposure, exposure=exposure, gain=gain,
+                color_sharpness=color_sharpness,
             )
         return cameras
 

@@ -13,8 +13,8 @@ class RobotCameraExtrinsic:
     
     参数表：
     - cam_0_extrinsic: 眼在手外头部相机外参
-    - cam_1_extrinsic: 眼在手上右手相机外参
-    - cam_2_extrinsic: 眼在手上左手相机外参
+    - cam_1_extrinsic: 眼在手上左手相机外参
+    - cam_2_extrinsic: 眼在手上右手相机外参
     """
     cam_0_extrinsic: dict
     cam_1_extrinsic: dict

@@ -48,7 +48,7 @@ _THREAD_STOP_TIMEOUT_S = 15.0
 
 
 class OrbbecG305Camera(Camera):
-    """使用第 ``device_index`` 台 Gemini 305 的独占 RGB-D 相机流。
+    """按序列号或设备索引选择 Gemini 305 的独占 RGB-D 相机流。
 
     优先使用软件 D2C 对齐，若请求硬件 D2C 且设备支持则使用硬件 D2C。目前只有848X480_30的profile支持硬件D2C。
 
@@ -57,10 +57,14 @@ class OrbbecG305Camera(Camera):
     参数表：
     - ``profile``：请求的相机 Profile，必须在 G305_SUPPORTED_PROFILES 中。
     - ``alignment_mode``：请求的 D2C 对齐模式，默认 SOFTWARE。
-    - ``device_index``：选择第几台相机，默认 0。
+    - ``device_index``：未指定序列号时选择第几台相机，默认 0。
+    - ``serial_number``：绑定物理相机，指定后优先于设备索引。
     - ``frame_timeout_ms``：等待一帧的最长毫秒数，默认 1000。
     - ``startup_timeout_s``：启动等待首帧的最长秒数，默认 8.0。
     - ``depth_processing``：深度处理配置，默认使用官方 SDK 的滤波链。
+    - ``auto_exposure``：G305 自动曝光开关；设备会同步彩色、IR 和深度流。
+    - ``exposure`` / ``gain``：关闭自动曝光时使用的手动值；自动模式忽略。
+    - ``color_sharpness``：可选彩色锐度，0 到 100；None 保留设备当前值。
     - ``observation_mode``：观测模式，FINAL_ONLY 或 RAW_AND_FILTERED, 其中RAW_AND_FILTERED模式会在每帧观测中同时返回未过滤和过滤后的深度图和点云，用于滤波诊断。
 
     """
@@ -73,15 +77,34 @@ class OrbbecG305Camera(Camera):
         frame_timeout_ms: int = 1_000,
         startup_timeout_s: float = 8.0,
         depth_processing: DepthProcessingConfig = DepthProcessingConfig(),
-        observation_mode: str = "FINAL_ONLY"
+        observation_mode: str = "FINAL_ONLY",
+        *,
+        serial_number: str | None = None,
+        auto_exposure: bool | None = None,
+        exposure: int | None = None,
+        gain: int | None = None,
+        color_sharpness: int | None = None,
     ) -> None:
         if device_index < 0:
             raise ValueError("设备索引不能为负数")
         if frame_timeout_ms <= 0 or startup_timeout_s <= 0:
             raise ValueError("超时时间必须为正数")
+        if serial_number is not None and (not isinstance(serial_number, str) or not serial_number.strip()):
+            raise ValueError("设备序列号必须为非空字符串")
+        if auto_exposure is not None and type(auto_exposure) is not bool:
+            raise ValueError("auto_exposure 必须是布尔值或 None")
+        if auto_exposure is False and (type(exposure) is not int or type(gain) is not int):
+            raise ValueError("关闭自动曝光时 exposure 和 gain 必须是整数")
+        if auto_exposure is None and (exposure is not None or gain is not None):
+            raise ValueError("配置 exposure 或 gain 时必须指定 auto_exposure")
         self._requested_profile = profile #请求的 profile
         self._requested_alignment = alignment_mode #请求的对齐模式
         self._device_index = device_index #设备id
+        self._serial_number = serial_number.strip() if serial_number is not None else None
+        self._auto_exposure = auto_exposure
+        self._exposure = exposure if auto_exposure is False else None
+        self._gain = gain if auto_exposure is False else None
+        self._color_sharpness = color_sharpness
         self._frame_timeout_ms = frame_timeout_ms #一帧最长等待时间
         self._startup_timeout_s = startup_timeout_s #启动超时时间
         self._depth_processing = depth_processing #深度处理配置
@@ -167,7 +190,7 @@ class OrbbecG305Camera(Camera):
     
     def capabilities(self) -> CameraCapabilities:
         return CameraCapabilities(
-            camera_id=self._camera_id or f"G305-{self._device_index}",
+            camera_id=self._camera_id or self._serial_number or f"G305-{self._device_index}",
             supported_profiles=G305_SUPPORTED_PROFILES,
             software_alignment_profiles=G305_SUPPORTED_PROFILES,
             hardware_alignment_profiles=(G305_848X480_30,) if G305_848X480_30 in G305_SUPPORTED_PROFILES else (),
@@ -337,6 +360,16 @@ class OrbbecG305Camera(Camera):
             if actual_alignment == AlignmentMode.SOFTWARE:
                 self._align_filter = ob.AlignFilter(align_to_stream=ob.OBStreamType.COLOR_STREAM)
             pipeline.start(config)
+            if self._auto_exposure is not None or self._color_sharpness is not None:
+                # Pipeline.start 返回时传感器可能尚未出帧；等双流启动后再写属性。
+                startup_deadline = time.monotonic() + self._startup_timeout_s
+                while self._read_capture_frames(pipeline) is None:
+                    if time.monotonic() >= startup_deadline:
+                        raise CameraTimeoutError("G305 双流启动后未收到完整首帧")
+                self._apply_camera_settings(ob, device)
+                # 属性读回与首帧元数据可能已更新，但图像还滞后 1～2 帧。
+                for _ in range(2):
+                    self._read_capture_frames(pipeline)
 
             # 官方样例要求 Pipeline 成功启动后再创建滤波器，部分 SDK 版本会在
             # 没有活动设备上下文时拒绝构造滤波对象。
@@ -354,6 +387,55 @@ class OrbbecG305Camera(Camera):
                     pass
             self._clear_pipeline_session_references()
             raise
+
+    def _apply_camera_settings(self, ob: Any, device: Any) -> None:
+        """每次建立 Pipeline 时应用曝光模式和独立的彩色锐度。"""
+        int_settings = []
+        if self._auto_exposure is False:
+            int_settings.extend((
+                ("OB_PROP_COLOR_EXPOSURE_INT", "曝光", self._exposure),
+                ("OB_PROP_COLOR_GAIN_INT", "增益", self._gain),
+            ))
+        if self._color_sharpness is not None:
+            int_settings.append(("OB_PROP_COLOR_SHARPNESS_INT", "彩色锐度", self._color_sharpness))
+
+        # 先检查所有将要写入的整数属性，避免中途发现配置越界。
+        checked_settings = []
+        for property_name, label, value in int_settings:
+            try:
+                property_id = getattr(ob.OBPropertyID, property_name)
+                if not device.is_property_supported(property_id, ob.OBPermissionType.PERMISSION_WRITE):
+                    raise CameraStreamError(f"G305 {label}属性不支持写入")
+                actual_range = device.get_int_property_range(property_id)
+                if (actual_range.step <= 0 or not actual_range.min <= value <= actual_range.max
+                        or (value - actual_range.min) % actual_range.step != 0):
+                    raise CameraStreamError(
+                        f"G305 {label}值 {value} 不符合设备范围 "
+                        f"{actual_range.min}..{actual_range.max}、步长 {actual_range.step}"
+                    )
+            except CameraStreamError:
+                raise
+            except Exception as error:
+                raise CameraStreamError(f"检查 G305 {label}属性失败: {error}") from error
+            checked_settings.append((property_id, label, value))
+
+        if self._auto_exposure is not None:
+            try:
+                property_id = ob.OBPropertyID.OB_PROP_COLOR_AUTO_EXPOSURE_BOOL
+                if not device.is_property_supported(property_id, ob.OBPermissionType.PERMISSION_WRITE):
+                    raise CameraStreamError("G305 自动曝光属性不支持写入")
+                # 该设备会同步彩色、IR 和深度流的自动曝光状态。
+                device.set_bool_property(property_id, self._auto_exposure)
+            except CameraStreamError:
+                raise
+            except Exception as error:
+                raise CameraStreamError(f"设置 G305 自动曝光为 {self._auto_exposure} 失败: {error}") from error
+
+        for property_id, label, value in checked_settings:
+            try:
+                device.set_int_property(property_id, value)
+            except Exception as error:
+                raise CameraStreamError(f"设置 G305 {label}为 {value} 失败: {error}") from error
 
     def _close_pipeline_session(self, pipeline: Any) -> None:
         # Never destroy a pipeline while its reader still owns it.
@@ -576,18 +658,18 @@ class OrbbecG305Camera(Camera):
         devices = context.query_devices()
         count = devices.get_count()
         with self._lock:
-            expected_camera_id = self._camera_id
+            expected_camera_id = self._camera_id or self._serial_number
 
         device: Any | None = None
         if expected_camera_id is not None:
-            # 重连时按首次启动记录的序列号找回同一台设备，避免 USB 重枚举后索引改变。
+            # 首次启动和重连均按序列号选择，避免 USB 重枚举后索引改变。
             for index in range(count):
                 candidate = devices[index]
                 if candidate.get_device_info().get_serial_number() == expected_camera_id:
                     device = candidate
                     break
             if device is None:
-                raise CameraNotFoundError(f"未检测到原相机 {expected_camera_id}")
+                raise CameraNotFoundError(f"未检测到序列号 {expected_camera_id} 的 G305")
         else:
             if self._device_index >= count:
                 raise CameraNotFoundError(f"请求设备索引 {self._device_index}，但当前只检测到 {count} 台相机")
